@@ -1,0 +1,876 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>zCAISAgent · 控制台</title>
+<link rel="icon" href="data:,">
+<style>
+  :root {
+    --paper: #0f110e;
+    --panel: #151812;
+    --panel-2: #1b1f18;
+    --line: #2a2e26;
+    --ink: #e9e7dc;
+    --muted: #97998c;
+    --gold: #d8a657;
+    --gold-soft: rgba(216, 166, 87, .12);
+    --danger: #d8735f;
+    --ok: #8fbf6a;
+    --serif: "Iowan Old Style", "Palatino Linotype", "Songti SC", "Noto Serif SC", Georgia, serif;
+    --mono: "Cascadia Mono", "JetBrains Mono", Consolas, "SF Mono", monospace;
+    --sans: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body { height: 100%; }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--sans);
+    -webkit-font-smoothing: antialiased;
+    display: grid;
+    grid-template-columns: 288px 1fr;
+    grid-template-rows: minmax(0, 1fr);
+    overflow: hidden;
+  }
+
+  /* 细网格纹理，制造纸面质感 */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    background-image:
+      linear-gradient(rgba(255, 255, 255, .018) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, .018) 1px, transparent 1px);
+    background-size: 32px 32px;
+    z-index: 0;
+  }
+
+  /* ── 侧栏 ── */
+  .rail {
+    position: relative;
+    z-index: 1;
+    border-right: 1px solid var(--line);
+    background: var(--panel);
+    padding: 28px 22px 0;
+    display: flex;
+    flex-direction: column;
+    gap: 26px;
+    overflow-y: auto;
+    min-height: 0;
+  }
+
+  .brand h1 {
+    font-family: var(--serif);
+    font-size: 22px;
+    font-weight: 600;
+    letter-spacing: .01em;
+    margin: 10px 0 4px;
+  }
+
+  .brand p {
+    margin: 0;
+    font-size: 11px;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  .pulse {
+    display: block;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--ok);
+    box-shadow: 0 0 0 0 rgba(143, 191, 106, .55);
+    animation: pulse 2.4s infinite;
+  }
+
+  @keyframes pulse {
+    70%  { box-shadow: 0 0 0 7px rgba(143, 191, 106, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(143, 191, 106, 0); }
+  }
+
+  .field label {
+    display: block;
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 7px;
+  }
+
+  .field input {
+    width: 100%;
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    color: var(--ink);
+    font-family: var(--mono);
+    font-size: 12.5px;
+    padding: 9px 10px;
+    outline: none;
+    transition: border-color .18s, box-shadow .18s;
+  }
+
+  .field input:focus {
+    border-color: var(--gold);
+    box-shadow: 0 0 0 3px var(--gold-soft);
+  }
+
+  .hint {
+    margin: 6px 0 0;
+    font-size: 10.5px;
+    line-height: 1.5;
+    color: var(--muted);
+  }
+
+  .meta {
+    border-top: 1px solid var(--line);
+    padding-top: 18px;
+    display: grid;
+    gap: 9px;
+    font-family: var(--mono);
+    font-size: 11px;
+  }
+
+  .meta div {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .meta span { color: var(--muted); }
+
+  .meta code {
+    color: var(--ink);
+    max-width: 150px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .rail-actions {
+    margin-top: auto;
+    position: sticky;
+    bottom: 0;
+    z-index: 2;
+    display: grid;
+    gap: 10px;
+    background: var(--panel);
+    padding: 16px 0 28px;
+  }
+
+  button {
+    font-family: var(--sans);
+    cursor: pointer;
+    border-radius: 4px;
+    transition: background .18s, border-color .18s, color .18s, transform .08s;
+  }
+
+  .ghost {
+    background: transparent;
+    border: 1px solid var(--line);
+    color: var(--muted);
+    font-size: 12px;
+    padding: 9px 12px;
+    letter-spacing: .04em;
+  }
+
+  .ghost:hover { border-color: var(--gold); color: var(--gold); }
+
+  .docs {
+    text-align: center;
+    font-size: 11px;
+    color: var(--muted);
+    text-decoration: none;
+    border-bottom: 1px dashed var(--line);
+    padding-bottom: 2px;
+    align-self: center;
+  }
+
+  .docs:hover { color: var(--gold); border-color: var(--gold); }
+
+  /* ── 主区 ── */
+  main {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .topbar {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 20px 40px 16px;
+    border-bottom: 1px solid var(--line);
+    backdrop-filter: blur(6px);
+  }
+
+  .topbar h2 {
+    font-family: var(--serif);
+    font-size: 15px;
+    font-weight: 500;
+    margin: 0;
+    letter-spacing: .02em;
+  }
+
+  .topbar .stage {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  .stage[data-state="running"] { color: var(--gold); }
+
+  #messages {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 40px 40px 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 30px;
+    scroll-behavior: smooth;
+  }
+
+  /* 空状态 */
+  .empty {
+    margin: auto;
+    max-width: 460px;
+    text-align: left;
+    animation: rise .5s ease both;
+  }
+
+  .empty .eyebrow {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: .22em;
+    text-transform: uppercase;
+    color: var(--gold);
+    margin-bottom: 14px;
+  }
+
+  .empty h3 {
+    font-family: var(--serif);
+    font-size: 30px;
+    line-height: 1.25;
+    font-weight: 500;
+    margin: 0 0 14px;
+  }
+
+  .empty p {
+    color: var(--muted);
+    font-size: 13.5px;
+    line-height: 1.8;
+    margin: 0 0 24px;
+  }
+
+  .samples { display: grid; gap: 8px; }
+
+  .samples button {
+    text-align: left;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    color: var(--ink);
+    font-size: 13px;
+    padding: 12px 14px;
+    opacity: 0;
+    animation: rise .45s ease forwards;
+  }
+
+  .samples button:hover { border-color: var(--gold); background: var(--gold-soft); }
+
+  .samples button:nth-child(1) { animation-delay: .06s; }
+  .samples button:nth-child(2) { animation-delay: .12s; }
+  .samples button:nth-child(3) { animation-delay: .18s; }
+
+  @keyframes rise {
+    from { opacity: 0; transform: translateY(10px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  /* 消息 */
+  .msg { animation: rise .35s ease both; }
+
+  .msg.user {
+    align-self: flex-end;
+    max-width: 72%;
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    border-radius: 10px 10px 2px 10px;
+    padding: 12px 16px;
+    font-size: 14px;
+    line-height: 1.7;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  .msg.agent {
+    max-width: 760px;
+    padding-left: 18px;
+    border-left: 2px solid var(--gold);
+  }
+
+  .msg.agent .role {
+    font-family: var(--mono);
+    font-size: 9.5px;
+    letter-spacing: .18em;
+    text-transform: uppercase;
+    color: var(--gold);
+    margin-bottom: 9px;
+  }
+
+  .msg.agent .body {
+    font-family: var(--serif);
+    font-size: 16.5px;
+    line-height: 1.85;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  .caret {
+    display: inline-block;
+    width: 8px;
+    height: 1.05em;
+    background: var(--gold);
+    vertical-align: -2px;
+    margin-left: 2px;
+    animation: blink 1s steps(2) infinite;
+  }
+
+  @keyframes blink { 50% { opacity: 0; } }
+
+  .thinking {
+    display: flex;
+    gap: 5px;
+    align-items: center;
+    padding: 4px 0;
+  }
+
+  .thinking i {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--gold);
+    animation: bounce 1.2s infinite;
+  }
+
+  .thinking i:nth-child(2) { animation-delay: .15s; }
+  .thinking i:nth-child(3) { animation-delay: .3s; }
+
+  @keyframes bounce {
+    0%, 60%, 100% { opacity: .25; transform: translateY(0); }
+    30%           { opacity: 1; transform: translateY(-4px); }
+  }
+
+  /* 元信息 */
+  .agent-meta {
+    margin-top: 14px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .badge {
+    font-family: var(--mono);
+    font-size: 9.5px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    padding: 3px 7px;
+    color: var(--muted);
+  }
+
+  .badge.high   { color: var(--gold); border-color: rgba(216, 166, 87, .45); }
+  .badge.low,
+  .badge.warn   { color: var(--danger); border-color: rgba(216, 115, 95, .45); }
+  .badge.ok     { color: var(--ok); border-color: rgba(143, 191, 106, .4); }
+
+  .citations {
+    margin-top: 12px;
+    display: grid;
+    gap: 7px;
+  }
+
+  .citation {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 9px 12px;
+    font-size: 12px;
+    line-height: 1.7;
+    color: var(--muted);
+  }
+
+  .citation b {
+    display: block;
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: .06em;
+    color: var(--gold);
+    margin-bottom: 4px;
+  }
+
+  /* 输入区 */
+  .composer {
+    flex: none;
+    padding: 16px 40px 26px;
+    border-top: 1px solid var(--line);
+    background: var(--paper);
+  }
+
+  .composer-inner {
+    display: flex;
+    gap: 12px;
+    align-items: flex-end;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 12px 12px 12px 16px;
+    transition: border-color .2s, box-shadow .2s;
+  }
+
+  .composer-inner:focus-within {
+    border-color: rgba(216, 166, 87, .55);
+    box-shadow: 0 0 0 3px var(--gold-soft);
+  }
+
+  textarea {
+    flex: 1;
+    resize: none;
+    background: transparent;
+    border: 0;
+    outline: none;
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 14px;
+    line-height: 1.65;
+    max-height: 160px;
+    padding: 3px 0;
+  }
+
+  textarea::placeholder { color: #6c6e63; }
+
+  .send {
+    flex: none;
+    background: var(--gold);
+    border: 1px solid var(--gold);
+    color: #17140c;
+    font-size: 12.5px;
+    font-weight: 600;
+    letter-spacing: .06em;
+    padding: 9px 18px;
+    border-radius: 5px;
+  }
+
+  .send:hover:not(:disabled) { background: #e6b96f; }
+
+  .send:active:not(:disabled) { transform: translateY(1px); }
+
+  .send:disabled {
+    background: transparent;
+    border-color: var(--line);
+    color: var(--muted);
+    cursor: not-allowed;
+  }
+
+  .foot {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 9px;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: #6c6e63;
+    letter-spacing: .04em;
+  }
+
+  .error {
+    margin-top: 10px;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--danger);
+  }
+
+  /* 滚动条 */
+  #messages::-webkit-scrollbar, .rail::-webkit-scrollbar { width: 7px; }
+  #messages::-webkit-scrollbar-thumb, .rail::-webkit-scrollbar-thumb {
+    background: #2c3128;
+    border-radius: 4px;
+  }
+
+  @media (max-width: 860px) {
+    body { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
+    .rail {
+      flex-direction: row;
+      align-items: center;
+      gap: 14px;
+      padding: 12px 16px;
+      border-right: 0;
+      border-bottom: 1px solid var(--line);
+      overflow-x: auto;
+      overflow-y: hidden;
+      flex-wrap: nowrap;
+    }
+    .brand h1 { font-size: 16px; margin: 0; }
+    .brand p, .pulse, .meta, .hint { display: none; }
+    .field { min-width: 130px; }
+    .field label { margin-bottom: 4px; }
+    .rail-actions {
+      position: static;
+      margin-top: 0;
+      padding: 0;
+      grid-auto-flow: column;
+      flex: none;
+    }
+    .docs { display: none; }
+    #messages { padding: 24px 18px 12px; }
+    .topbar, .composer { padding-left: 18px; padding-right: 18px; }
+    .msg.user { max-width: 88%; }
+    .empty h3 { font-size: 24px; }
+  }
+</style>
+</head>
+<body>
+
+<aside class="rail">
+  <div class="brand">
+    <span class="pulse"></span>
+    <h1>zCAISAgent</h1>
+    <p>Compound AI Systems</p>
+  </div>
+
+  <div class="field">
+    <label for="apiKey">X-API-Key</label>
+    <input id="apiKey" type="password" autocomplete="off" spellcheck="false" placeholder="dev-key">
+    <p class="hint">对应 .env 中 ZCAISAGENT_API_KEY 的值</p>
+  </div>
+
+  <div class="field">
+    <label for="tenant">Tenant</label>
+    <input id="tenant" value="demo" spellcheck="false">
+  </div>
+
+  <div class="meta">
+    <div><span>thread</span><code id="mThread">—</code></div>
+    <div><span>run</span><code id="mRun">—</code></div>
+  </div>
+
+  <div class="rail-actions">
+    <button class="ghost" id="newThread" type="button">新会话</button>
+    <a class="docs" href="/docs" target="_blank" rel="noopener">Swagger 文档 ↗</a>
+  </div>
+</aside>
+
+<main>
+  <div class="topbar">
+    <h2>企业知识问答</h2>
+    <span class="stage" id="stage" data-state="idle">idle</span>
+  </div>
+
+  <section id="messages">
+    <div class="empty" id="empty">
+      <div class="eyebrow">Agentic RAG</div>
+      <h3>问点什么，小燕麦去查。</h3>
+      <p>答案由多节点状态机生成：分析 → 路由 → 检索 → 综合 → 校验 → 作答。证据不足时会拒绝编造。</p>
+      <div class="samples">
+        <button type="button">一线城市住宿标准是多少？</button>
+        <button type="button">出差坐高铁有什么要求？</button>
+        <button type="button">报销超标了怎么处理？</button>
+      </div>
+    </div>
+  </section>
+
+  <form class="composer" id="composer">
+    <div class="composer-inner">
+      <textarea id="input" rows="1" placeholder="输入问题，Enter 发送 / Shift + Enter 换行"></textarea>
+      <button class="send" id="send" type="submit">发送</button>
+    </div>
+    <div class="foot">
+      <span>POST /v1/chat · SSE</span>
+      <span id="hintLine">等待输入</span>
+    </div>
+    <div class="error" id="error" hidden></div>
+  </form>
+</main>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const msgs = $('messages');
+  const input = $('input');
+  const sendBtn = $('send');
+  const errorBox = $('error');
+  const hintLine = $('hintLine');
+  const stageEl = $('stage');
+
+  let threadId = newThreadId();
+  let busy = false;
+
+  // 恢复本地设置
+  $('apiKey').value = localStorage.getItem('zcais.key') || 'dev-key';
+  $('tenant').value = localStorage.getItem('zcais.tenant') || 'demo';
+  $('apiKey').addEventListener('change', (e) => localStorage.setItem('zcais.key', e.target.value.trim()));
+  $('tenant').addEventListener('change', (e) => localStorage.setItem('zcais.tenant', e.target.value.trim()));
+
+  $('newThread').addEventListener('click', () => {
+    if (busy) return;
+    threadId = newThreadId();
+    $('mThread').textContent = short(threadId);
+    $('mRun').textContent = '—';
+    setStage('idle');
+    document.querySelectorAll('.msg').forEach((n) => n.remove());
+    $('empty').hidden = false;
+    input.focus();
+  });
+
+  document.querySelectorAll('.samples button').forEach((b) => {
+    b.addEventListener('click', () => {
+      input.value = b.textContent.trim();
+      autosize();
+      input.focus();
+    });
+  });
+
+  input.addEventListener('input', autosize);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+      e.preventDefault();
+      $('composer').requestSubmit();
+    }
+  });
+
+  $('composer').addEventListener('submit', (e) => {
+    e.preventDefault();
+    ask();
+  });
+
+  function autosize() {
+    input.style.height = 'auto';
+    input.style.height = Math.min(input.scrollHeight, 160) + 'px';
+  }
+
+  function newThreadId() {
+    return (crypto.randomUUID && crypto.randomUUID()) || 'thread_' + Date.now().toString(36);
+  }
+
+  function short(id) {
+    return id.length > 14 ? id.slice(0, 8) + '…' : id;
+  }
+
+  function setStage(text, running = false) {
+    stageEl.textContent = text;
+    stageEl.dataset.state = running ? 'running' : 'idle';
+  }
+
+  function showError(msg) {
+    errorBox.hidden = !msg;
+    errorBox.textContent = msg || '';
+  }
+
+  function simpleText(tag, cls, text) {
+    const el = document.createElement(tag);
+    if (cls) el.className = cls;
+    el.textContent = text;
+    return el;
+  }
+
+  function appendUser(text) {
+    const wrap = simpleText('div', 'msg user', text);
+    msgs.appendChild(wrap);
+    return wrap;
+  }
+
+  function appendAgent() {
+    const wrap = document.createElement('div');
+    wrap.className = 'msg agent';
+    wrap.appendChild(simpleText('div', 'role', 'zCAISAgent'));
+
+    const body = document.createElement('div');
+    body.className = 'body';
+
+    const thinking = document.createElement('div');
+    thinking.className = 'thinking';
+    thinking.innerHTML = '<i></i><i></i><i></i>';
+    body.appendChild(thinking);
+
+    wrap.appendChild(body);
+    msgs.appendChild(wrap);
+
+    const meta = document.createElement('div');
+    meta.className = 'agent-meta';
+    wrap.appendChild(meta);
+
+    const citations = document.createElement('div');
+    citations.className = 'citations';
+    wrap.appendChild(citations);
+
+    return { wrap, body, meta, citations, thinking };
+  }
+
+  function scrollToBottom(force = false) {
+    const near = msgs.scrollHeight - msgs.scrollTop - msgs.clientHeight < 140;
+    if (force || near) msgs.scrollTop = msgs.scrollHeight;
+  }
+
+  async function readSSE(response, onEvent) {
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let buffer = '';
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      let cut;
+      while ((cut = buffer.indexOf('\n\n')) >= 0) {
+        const block = buffer.slice(0, cut);
+        buffer = buffer.slice(cut + 2);
+
+        let event = 'message';
+        const dataLines = [];
+        for (const line of block.split('\n')) {
+          if (line.startsWith('event:')) event = line.slice(6).trim();
+          else if (line.startsWith('data:')) dataLines.push(line.slice(5).trim());
+        }
+        if (!dataLines.length) continue;
+        try {
+          onEvent(event, JSON.parse(dataLines.join('\n')));
+        } catch {
+          /* 忽略无法解析的心跳块 */
+        }
+      }
+    }
+  }
+
+  async function ask() {
+    const goal = input.value.trim();
+    if (!goal || busy) return;
+
+    const apiKey = $('apiKey').value.trim();
+    if (!apiKey) {
+      showError('请先在左侧填写 X-API-Key');
+      return;
+    }
+
+    showError('');
+    busy = true;
+    sendBtn.disabled = true;
+    setStage('running', true);
+    hintLine.textContent = '生成中…';
+
+    $('empty').hidden = true;
+    input.value = '';
+    autosize();
+    appendUser(goal);
+    const bubble = appendAgent();
+    scrollToBottom(true);
+
+    let text = '';
+    let charCount = 0;
+
+    const render = (chunk) => {
+      bubble.thinking.remove();
+      text += chunk;
+      bubble.body.textContent = text;
+      const caret = document.createElement('span');
+      caret.className = 'caret';
+      bubble.body.appendChild(caret);
+      charCount = text.length;
+      scrollToBottom();
+    };
+
+    try {
+      const response = await fetch('/v1/chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-Key': apiKey,
+        },
+        body: JSON.stringify({
+          goal,
+          thread_id: threadId,
+          tenant_id: $('tenant').value.trim() || 'demo',
+          user_id: 'web',
+        }),
+      });
+
+      if (!response.ok) {
+        const detail = await response.json().catch(() => ({}));
+        throw new Error(detail.message || detail.detail || `HTTP ${response.status}`);
+      }
+
+      await readSSE(response, (event, data) => {
+        if (event === 'meta') {
+          $('mRun').textContent = short(data.run_id || '—');
+          $('mThread').textContent = short(threadId);
+        } else if (event === 'token') {
+          render(data.text || '');
+        } else if (event === 'done') {
+          finish(data);
+        }
+      });
+
+      // 兜底：没有 done 事件时也清理光标
+      bubble.body.querySelector('.caret')?.remove();
+    } catch (err) {
+      bubble.thinking.remove();
+      bubble.body.textContent = '';
+      bubble.wrap.classList.add('failed');
+      bubble.meta.appendChild(simpleText('span', 'badge warn', '请求失败'));
+      showError(String(err.message || err));
+    } finally {
+      busy = false;
+      sendBtn.disabled = false;
+      setStage('idle');
+      hintLine.textContent = charCount ? `已完成 · ${charCount} 字` : '等待输入';
+      setTimeout(() => scrollToBottom(true), 40);
+      input.focus();
+    }
+
+    function finish(data) {
+      bubble.body.querySelector('.caret')?.remove();
+      if (!text) bubble.body.textContent = '（无内容）';
+
+      const confidence = (data.confidence || 'low').toLowerCase();
+      const level = confidence === 'high' ? 'high' : confidence === 'medium' ? '' : 'low';
+      bubble.meta.appendChild(simpleText('span', `badge ${level}`.trim(), 'confidence · ' + confidence));
+
+      const cites = data.citations || [];
+      bubble.meta.appendChild(simpleText('span', 'badge', `citations · ${cites.length}`));
+
+      cites.forEach((c) => {
+        const card = document.createElement('div');
+        card.className = 'citation';
+        card.appendChild(simpleText('b', 'cite-id', c.evidence_id || 'unknown'));
+        card.appendChild(document.createTextNode((c.quote || '（无引文）').trim()));
+        bubble.citations.appendChild(card);
+      });
+    }
+  }
+
+  // 初始化
+  $('mThread').textContent = short(threadId);
+  autosize();
+  input.focus();
+})();
+</script>
+</body>
+</html>

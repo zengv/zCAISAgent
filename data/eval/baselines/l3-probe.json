@@ -1,0 +1,72 @@
+﻿{
+  "total": 10,
+  "avg_actions": 2.1,
+  "max_actions": 3,
+  "avg_steps": 12.3,
+  "status": {
+    "abstained": 9,
+    "succeeded": 1
+  },
+  "per_case": [
+    {
+      "id": "g041",
+      "actions": 3,
+      "steps": 14,
+      "status": "abstained"
+    },
+    {
+      "id": "g042",
+      "actions": 3,
+      "steps": 14,
+      "status": "abstained"
+    },
+    {
+      "id": "g043",
+      "actions": 2,
+      "steps": 13,
+      "status": "abstained"
+    },
+    {
+      "id": "g044",
+      "actions": 2,
+      "steps": 13,
+      "status": "abstained"
+    },
+    {
+      "id": "g045",
+      "actions": 2,
+      "steps": 11,
+      "status": "abstained"
+    },
+    {
+      "id": "g046",
+      "actions": 3,
+      "steps": 14,
+      "status": "abstained"
+    },
+    {
+      "id": "g047",
+      "actions": 2,
+      "steps": 11,
+      "status": "abstained"
+    },
+    {
+      "id": "g048",
+      "actions": 1,
+      "steps": 10,
+      "status": "succeeded"
+    },
+    {
+      "id": "g049",
+      "actions": 2,
+      "steps": 13,
+      "status": "abstained"
+    },
+    {
+      "id": "g050",
+      "actions": 1,
+      "steps": 10,
+      "status": "abstained"
+    }
+  ]
+}

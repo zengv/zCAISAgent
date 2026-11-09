@@ -1,0 +1,57 @@
+﻿{
+  "total": 50,
+  "correct": 49,
+  "accuracy": 0.98,
+  "target": 0.85,
+  "pass": true,
+  "confusion": {
+    "L1": {
+      "L1": 20,
+      "L2": 0,
+      "L3": 0
+    },
+    "L2": {
+      "L1": 1,
+      "L2": 19,
+      "L3": 0
+    },
+    "L3": {
+      "L1": 0,
+      "L2": 0,
+      "L3": 10
+    }
+  },
+  "by_level": {
+    "L1": {
+      "total": 20,
+      "correct": 20,
+      "recall": 1.0
+    },
+    "L2": {
+      "total": 20,
+      "correct": 19,
+      "recall": 0.95
+    },
+    "L3": {
+      "total": 10,
+      "correct": 10,
+      "recall": 1.0
+    }
+  },
+  "basis": {
+    "rule": 50
+  },
+  "failures": [
+    {
+      "id": "g037",
+      "question": "新员工设备由主管申请，离职设备归还是否也由主管审批？",
+      "expected_level": "L2",
+      "actual_level": "L1",
+      "correct": false,
+      "intent": "查事实",
+      "complexity": "simple",
+      "basis": "rule",
+      "scenario": "it"
+    }
+  ]
+}

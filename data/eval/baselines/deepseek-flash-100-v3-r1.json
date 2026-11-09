@@ -1,0 +1,411 @@
+{
+  "total": 100,
+  "succeeded": 70,
+  "abstained": 30,
+  "failed": 0,
+  "abstain_reasons": {
+    "evidence_insufficient": 13,
+    "unsafe_input": 16,
+    "number_mismatch": 1
+  },
+  "success_rate": 0.7,
+  "correct_rate": 0.98,
+  "abstain_accuracy": 0.98,
+  "avg_citation_support": 0.9721,
+  "avg_faithfulness": 0.8924,
+  "avg_context_recall": 1.0,
+  "avg_steps": 8.21,
+  "avg_actions": 1.15,
+  "total_cost_usd": 0.065509,
+  "by_level": {
+    "L1": {
+      "total": 75,
+      "succeeded": 46,
+      "abstained": 29,
+      "failed": 0,
+      "abstain_reasons": {
+        "evidence_insufficient": 13,
+        "unsafe_input": 16
+      },
+      "success_rate": 0.613,
+      "correct_rate": 0.987,
+      "abstain_accuracy": 0.987,
+      "avg_citation_support": 0.9739,
+      "avg_faithfulness": 0.9504,
+      "avg_context_recall": 1.0,
+      "avg_steps": 6.79,
+      "avg_actions": 1.0267,
+      "total_cost_usd": 0.031596
+    },
+    "L2": {
+      "total": 25,
+      "succeeded": 24,
+      "abstained": 1,
+      "failed": 0,
+      "abstain_reasons": {
+        "number_mismatch": 1
+      },
+      "success_rate": 0.96,
+      "correct_rate": 0.96,
+      "abstain_accuracy": 0.96,
+      "avg_citation_support": 0.9688,
+      "avg_faithfulness": 0.7812,
+      "avg_context_recall": 1.0,
+      "avg_steps": 12.48,
+      "avg_actions": 1.52,
+      "total_cost_usd": 0.033913
+    }
+  },
+  "by_tag": {
+    "authz": {
+      "total": 4,
+      "succeeded": 0,
+      "abstained": 4,
+      "failed": 0,
+      "abstain_reasons": {
+        "unsafe_input": 4
+      },
+      "success_rate": 0.0,
+      "correct_rate": 1.0,
+      "abstain_accuracy": 1.0,
+      "avg_citation_support": null,
+      "avg_faithfulness": null,
+      "avg_context_recall": null,
+      "avg_steps": 3.0,
+      "avg_actions": 0.0,
+      "total_cost_usd": 0.0
+    },
+    "cross_doc": {
+      "total": 15,
+      "succeeded": 15,
+      "abstained": 0,
+      "failed": 0,
+      "abstain_reasons": {},
+      "success_rate": 1.0,
+      "correct_rate": 1.0,
+      "abstain_accuracy": 1.0,
+      "avg_citation_support": 1.0,
+      "avg_faithfulness": 0.9,
+      "avg_context_recall": 1.0,
+      "avg_steps": 11.27,
+      "avg_actions": 1.3333,
+      "total_cost_usd": 0.014736
+    },
+    "cross_tenant": {
+      "total": 4,
+      "succeeded": 0,
+      "abstained": 4,
+      "failed": 0,
+      "abstain_reasons": {
+        "unsafe_input": 4
+      },
+      "success_rate": 0.0,
+      "correct_rate": 1.0,
+      "abstain_accuracy": 1.0,
+      "avg_citation_support": null,
+      "avg_faithfulness": null,
+      "avg_context_recall": null,
+      "avg_steps": 3.0,
+      "avg_actions": 0.0,
+      "total_cost_usd": 0.0
+    },
+    "derived": {
+      "total": 14,
+      "succeeded": 13,
+      "abstained": 1,
+      "failed": 0,
+      "abstain_reasons": {
+        "number_mismatch": 1
+      },
+      "success_rate": 0.929,
+      "correct_rate": 0.929,
+      "abstain_accuracy": 0.929,
+      "avg_citation_support": 0.9423,
+      "avg_faithfulness": 0.5962,
+      "avg_context_recall": 1.0,
+      "avg_steps": 14.43,
+      "avg_actions": 1.9286,
+      "total_cost_usd": 0.025676
+    },
+    "injection": {
+      "total": 10,
+      "succeeded": 0,
+      "abstained": 10,
+      "failed": 0,
+      "abstain_reasons": {
+        "unsafe_input": 10
+      },
+      "success_rate": 0.0,
+      "correct_rate": 1.0,
+      "abstain_accuracy": 1.0,
+      "avg_citation_support": null,
+      "avg_faithfulness": null,
+      "avg_context_recall": null,
+      "avg_steps": 3.0,
+      "avg_actions": 0.0,
+      "total_cost_usd": 0.001034
+    },
+    "multi_hop": {
+      "total": 25,
+      "succeeded": 24,
+      "abstained": 1,
+      "failed": 0,
+      "abstain_reasons": {
+        "number_mismatch": 1
+      },
+      "success_rate": 0.96,
+      "correct_rate": 0.96,
+      "abstain_accuracy": 0.96,
+      "avg_citation_support": 0.9688,
+      "avg_faithfulness": 0.7812,
+      "avg_context_recall": 1.0,
+      "avg_steps": 12.48,
+      "avg_actions": 1.52,
+      "total_cost_usd": 0.033913
+    },
+    "no_answer": {
+      "total": 15,
+      "succeeded": 1,
+      "abstained": 14,
+      "failed": 0,
+      "abstain_reasons": {
+        "evidence_insufficient": 13,
+        "unsafe_input": 1
+      },
+      "success_rate": 0.067,
+      "correct_rate": 0.933,
+      "abstain_accuracy": 0.933,
+      "avg_citation_support": 0.5,
+      "avg_faithfulness": 0.0,
+      "avg_context_recall": null,
+      "avg_steps": 8.2,
+      "avg_actions": 1.8667,
+      "total_cost_usd": 0.002409
+    },
+    "policy": {
+      "total": 1,
+      "succeeded": 1,
+      "abstained": 0,
+      "failed": 0,
+      "abstain_reasons": {},
+      "success_rate": 1.0,
+      "correct_rate": 1.0,
+      "abstain_accuracy": 1.0,
+      "avg_citation_support": 1.0,
+      "avg_faithfulness": 1.0,
+      "avg_context_recall": 1.0,
+      "avg_steps": 7.0,
+      "avg_actions": 1.0,
+      "total_cost_usd": 0.000386
+    },
+    "single_hop": {
+      "total": 32,
+      "succeeded": 32,
+      "abstained": 0,
+      "failed": 0,
+      "abstain_reasons": {},
+      "success_rate": 1.0,
+      "correct_rate": 1.0,
+      "abstain_accuracy": 1.0,
+      "avg_citation_support": 0.9781,
+      "avg_faithfulness": 0.9755,
+      "avg_context_recall": 1.0,
+      "avg_steps": 7.56,
+      "avg_actions": 1.0938,
+      "total_cost_usd": 0.01996
+    },
+    "time": {
+      "total": 24,
+      "succeeded": 23,
+      "abstained": 1,
+      "failed": 0,
+      "abstain_reasons": {
+        "number_mismatch": 1
+      },
+      "success_rate": 0.958,
+      "correct_rate": 0.958,
+      "abstain_accuracy": 0.958,
+      "avg_citation_support": 0.9783,
+      "avg_faithfulness": 0.913,
+      "avg_context_recall": 1.0,
+      "avg_steps": 9.75,
+      "avg_actions": 1.2083,
+      "total_cost_usd": 0.027515
+    }
+  },
+  "by_scenario": {
+    "attendance": {
+      "total": 7,
+      "succeeded": 7,
+      "abstained": 0,
+      "failed": 0,
+      "abstain_reasons": {},
+      "success_rate": 1.0,
+      "correct_rate": 1.0,
+      "abstain_accuracy": 1.0,
+      "avg_citation_support": 1.0,
+      "avg_faithfulness": 0.8333,
+      "avg_context_recall": 1.0,
+      "avg_steps": 9.0,
+      "avg_actions": 1.1429,
+      "total_cost_usd": 0.007111
+    },
+    "hr": {
+      "total": 20,
+      "succeeded": 20,
+      "abstained": 0,
+      "failed": 0,
+      "abstain_reasons": {},
+      "success_rate": 1.0,
+      "correct_rate": 1.0,
+      "abstain_accuracy": 1.0,
+      "avg_citation_support": 0.9875,
+      "avg_faithfulness": 0.8958,
+      "avg_context_recall": 1.0,
+      "avg_steps": 8.75,
+      "avg_actions": 1.2,
+      "total_cost_usd": 0.013089
+    },
+    "it": {
+      "total": 16,
+      "succeeded": 16,
+      "abstained": 0,
+      "failed": 0,
+      "abstain_reasons": {},
+      "success_rate": 1.0,
+      "correct_rate": 1.0,
+      "abstain_accuracy": 1.0,
+      "avg_citation_support": 0.9875,
+      "avg_faithfulness": 0.9844,
+      "avg_context_recall": 1.0,
+      "avg_steps": 7.56,
+      "avg_actions": 1.0,
+      "total_cost_usd": 0.008649
+    },
+    "out_of_scope": {
+      "total": 15,
+      "succeeded": 1,
+      "abstained": 14,
+      "failed": 0,
+      "abstain_reasons": {
+        "evidence_insufficient": 13,
+        "unsafe_input": 1
+      },
+      "success_rate": 0.067,
+      "correct_rate": 0.933,
+      "abstain_accuracy": 0.933,
+      "avg_citation_support": 0.5,
+      "avg_faithfulness": 0.0,
+      "avg_context_recall": null,
+      "avg_steps": 8.2,
+      "avg_actions": 1.8667,
+      "total_cost_usd": 0.002409
+    },
+    "security": {
+      "total": 15,
+      "succeeded": 0,
+      "abstained": 15,
+      "failed": 0,
+      "abstain_reasons": {
+        "unsafe_input": 15
+      },
+      "success_rate": 0.0,
+      "correct_rate": 1.0,
+      "abstain_accuracy": 1.0,
+      "avg_citation_support": null,
+      "avg_faithfulness": null,
+      "avg_context_recall": null,
+      "avg_steps": 3.0,
+      "avg_actions": 0.0,
+      "total_cost_usd": 0.001034
+    },
+    "training": {
+      "total": 10,
+      "succeeded": 9,
+      "abstained": 1,
+      "failed": 0,
+      "abstain_reasons": {
+        "number_mismatch": 1
+      },
+      "success_rate": 0.9,
+      "correct_rate": 0.9,
+      "abstain_accuracy": 0.9,
+      "avg_citation_support": 1.0,
+      "avg_faithfulness": 0.8333,
+      "avg_context_recall": 1.0,
+      "avg_steps": 11.6,
+      "avg_actions": 1.5,
+      "total_cost_usd": 0.015357
+    },
+    "travel": {
+      "total": 17,
+      "succeeded": 17,
+      "abstained": 0,
+      "failed": 0,
+      "abstain_reasons": {},
+      "success_rate": 1.0,
+      "correct_rate": 1.0,
+      "abstain_accuracy": 1.0,
+      "avg_citation_support": 0.9412,
+      "avg_faithfulness": 0.9098,
+      "avg_context_recall": 1.0,
+      "avg_steps": 10.47,
+      "avg_actions": 1.4118,
+      "total_cost_usd": 0.01786
+    }
+  },
+  "coverage": {
+    "total": 100,
+    "target_total": 100,
+    "buckets": {
+      "single_hop": {
+        "count": 30,
+        "target": 30,
+        "ratio": 0.3,
+        "target_ratio": 0.3,
+        "gap": 0,
+        "ok": true
+      },
+      "multi_hop": {
+        "count": 25,
+        "target": 25,
+        "ratio": 0.25,
+        "target_ratio": 0.25,
+        "gap": 0,
+        "ok": true
+      },
+      "freshness": {
+        "count": 15,
+        "target": 15,
+        "ratio": 0.15,
+        "target_ratio": 0.15,
+        "gap": 0,
+        "ok": true
+      },
+      "no_answer": {
+        "count": 15,
+        "target": 15,
+        "ratio": 0.15,
+        "target_ratio": 0.15,
+        "gap": 0,
+        "ok": true
+      },
+      "authz": {
+        "count": 5,
+        "target": 5,
+        "ratio": 0.05,
+        "target_ratio": 0.05,
+        "gap": 0,
+        "ok": true
+      },
+      "injection": {
+        "count": 10,
+        "target": 10,
+        "ratio": 0.1,
+        "target_ratio": 0.1,
+        "gap": 0,
+        "ok": true
+      }
+    }
+  }
+}

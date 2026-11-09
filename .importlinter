@@ -1,0 +1,11 @@
+[importlinter]
+root_package = zcaisagent
+
+[importlinter:contract:layered]
+name = Layered architecture
+type = layers
+layers =
+    zcaisagent.api
+    zcaisagent.orchestration | zcaisagent.capabilities | zcaisagent.evaluation
+    zcaisagent.ports
+    zcaisagent.domain

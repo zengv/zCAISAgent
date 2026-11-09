@@ -1,0 +1,74 @@
+# zCAISAgent 模型路由配置
+# Python 3.11+ 的 tomllib 直接解析，零依赖。
+
+# 默认 provider：当调用方未显式指定 reasoning_effort 时，用它的等级。
+model_provider = "deepseek"
+
+# reasoning_effort 全量合法值；用于构建就近双向降级链。
+effort_levels = ["low", "high", "max"]
+
+# —— purpose → reasoning_effort 映射 ——
+# 未命中的 purpose 走 default。
+[purpose_effort]
+synthesize = "low"
+synthesize_retry = "low"
+direct_answer = "low"
+analyze = "high"
+plan = "high"
+reflect = "max"
+verify = "max"
+grade = "high"
+repair = "high"
+default = "low"
+
+# —— 模型提供者定义 ——
+# key_env 是环境变量名，启动时从系统环境或 .env 里读取实际密钥；
+# base_url 必须不带尾部 `/`，适配器内部会补。
+
+[model_providers.modelscope-ds-flash]
+name = "MS-Deepseek-flash"
+model = "deepseek-ai/DeepSeek-V4.1-Flash-1017"
+base_url = "https://api-inference.modelscope.cn/v1"
+key_env = "AI_KEY_MS"
+context_window = 400000
+reasoning_effort = "low"
+
+[model_providers.modelscope-glm-flash]
+name = "GLM-5.3-Flash"
+model = "ZhipuAI/GLM-5.3-Flash"
+base_url = "https://api-inference.modelscope.cn/v1"
+key_env = "AI_KEY_MS"
+context_window = 400000
+reasoning_effort = "low"
+
+[model_providers.deepseek]
+name = "Deepseek-flash"
+model = "deepseek-flash"
+base_url = "https://api.deepseek.com"
+key_env = "AI_KEY_DS"
+context_window = 800000
+reasoning_effort = "high"
+
+[model_providers.qwen]
+name = "Qwen-3.8-flash"
+model = "qwen3.8-flash"
+base_url = "https://maas.qianwenaiapi.com/compatible-mode/v1"
+key_env = "AI_KEY_QW"
+context_window = 800000
+reasoning_effort = "high"
+
+[model_providers.deepseek-pro]
+name = "Deepseek-v4-Pro"
+model = "deepseek-v4-pro"
+base_url = "https://api.deepseek.com"
+key_env = "AI_KEY_DS"
+context_window = 800000
+reasoning_effort = "max"
+
+[model_providers.qwen-max]
+name = "Qwen-3.8-Max"
+model = "qwen3.8-max-0902"
+base_url = "https://maas.qianwenaiapi.com/compatible-mode/v1"
+key_env = "AI_KEY_QW"
+context_window = 800000
+reasoning_effort = "max"

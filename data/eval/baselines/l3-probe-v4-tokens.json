@@ -1,0 +1,101 @@
+[
+  {
+    "purpose": "synthesize",
+    "max_tokens": 8192,
+    "timeout_s": 60.0,
+    "tokens_in": 1225,
+    "tokens_out": 3059,
+    "reasoning": 2227,
+    "chars": 1421,
+    "elapsed_s": 19.82,
+    "hit_cap": false
+  },
+  {
+    "purpose": "synthesize",
+    "max_tokens": 8192,
+    "timeout_s": 60.0,
+    "tokens_in": 1228,
+    "tokens_out": 4112,
+    "reasoning": 3087,
+    "chars": 1836,
+    "elapsed_s": 25.83,
+    "hit_cap": false
+  },
+  {
+    "purpose": "synthesize",
+    "max_tokens": 8192,
+    "timeout_s": 60.0,
+    "tokens_in": 1190,
+    "tokens_out": 1448,
+    "reasoning": 603,
+    "chars": 1580,
+    "elapsed_s": 10.25,
+    "hit_cap": false
+  },
+  {
+    "purpose": "synthesize",
+    "max_tokens": 8192,
+    "timeout_s": 60.0,
+    "tokens_in": 1224,
+    "tokens_out": 905,
+    "reasoning": 363,
+    "chars": 1042,
+    "elapsed_s": 5.9,
+    "hit_cap": false
+  },
+  {
+    "purpose": "synthesize",
+    "max_tokens": 8192,
+    "timeout_s": 60.0,
+    "tokens_in": 1224,
+    "tokens_out": 2120,
+    "reasoning": 1402,
+    "chars": 1418,
+    "elapsed_s": 14.41,
+    "hit_cap": false
+  },
+  {
+    "purpose": "synthesize",
+    "max_tokens": 8192,
+    "timeout_s": 60.0,
+    "tokens_in": 1237,
+    "tokens_out": 1583,
+    "reasoning": 1216,
+    "chars": 676,
+    "elapsed_s": 10.15,
+    "hit_cap": false
+  },
+  {
+    "purpose": "synthesize",
+    "max_tokens": 8192,
+    "timeout_s": 60.0,
+    "tokens_in": 1223,
+    "tokens_out": 1622,
+    "reasoning": 972,
+    "chars": 1268,
+    "elapsed_s": 11.66,
+    "hit_cap": false
+  },
+  {
+    "purpose": "synthesize",
+    "max_tokens": 8192,
+    "timeout_s": 60.0,
+    "tokens_in": 1222,
+    "tokens_out": 1720,
+    "reasoning": 1111,
+    "chars": 1168,
+    "elapsed_s": 10.86,
+    "hit_cap": false
+  },
+  {
+    "purpose": "synthesize",
+    "max_tokens": 8192,
+    "timeout_s": 60.0,
+    "tokens_in": 1235,
+    "tokens_out": 1055,
+    "reasoning": 509,
+    "chars": 1058,
+    "elapsed_s": 7.13,
+    "hit_cap": false
+  }
+]

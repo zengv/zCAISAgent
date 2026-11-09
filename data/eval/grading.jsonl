@@ -1,0 +1,50 @@
+{"id":"g001","question":"一线城市住宿标准是多少？","expected_level":"L1","scenario":"travel","rationale":"单一事实，单文档单条款可答。","tags":["single_hop"]}
+{"id":"g002","question":"出差补贴按什么标准发放？","expected_level":"L1","scenario":"travel","rationale":"单一取值，无需比较或分解。","tags":["single_hop"]}
+{"id":"g003","question":"出差结束后最晚多久内提交报销？","expected_level":"L1","scenario":"travel","rationale":"单一时限，单文档可答。","tags":["single_hop","time"]}
+{"id":"g004","question":"公司 VPN 使用哪个客户端？","expected_level":"L1","scenario":"it","rationale":"单一事实，单文档可答。","tags":["single_hop"]}
+{"id":"g005","question":"临时密码的有效期是多久？","expected_level":"L1","scenario":"it","rationale":"单一时限，单文档可答。","tags":["single_hop","time"]}
+{"id":"g006","question":"笔记本电脑的更换周期是几年？","expected_level":"L1","scenario":"it","rationale":"单一取值，单文档可答。","tags":["single_hop"]}
+{"id":"g007","question":"离职时最晚在几个工作日内归还设备？","expected_level":"L1","scenario":"it","rationale":"单一时限，单文档可答。","tags":["single_hop","time"]}
+{"id":"g008","question":"年假最晚可以延用到什么时候？","expected_level":"L1","scenario":"hr","rationale":"单一时间点，单文档可答。","tags":["single_hop","time"]}
+{"id":"g009","question":"病假工资按什么比例发放？","expected_level":"L1","scenario":"hr","rationale":"单一比例，单文档可答。","tags":["single_hop"]}
+{"id":"g010","question":"婚假需要在领证后多久内使用？","expected_level":"L1","scenario":"hr","rationale":"单一时限，单文档可答。","tags":["single_hop","time"]}
+{"id":"g011","question":"产假一共多少天？","expected_level":"L1","scenario":"hr","rationale":"单一取值，单文档可答。","tags":["single_hop"]}
+{"id":"g012","question":"丧假异地办理的额外路程假有几天？","expected_level":"L1","scenario":"hr","rationale":"单一取值，单文档可答。","tags":["single_hop"]}
+{"id":"g013","question":"专业软件安装需要谁审批？","expected_level":"L1","scenario":"it","rationale":"单一责任主体，单文档可答。","tags":["single_hop"]}
+{"id":"g014","question":"新员工设备由谁申请？","expected_level":"L1","scenario":"it","rationale":"单一责任主体，单文档可答。","tags":["single_hop"]}
+{"id":"g015","question":"企业邮箱容量是多少？","expected_level":"L1","scenario":"it","rationale":"单一取值，单文档可答。","tags":["single_hop"]}
+{"id":"g016","question":"加班申请需要提前多久提交？","expected_level":"L1","scenario":"attendance","rationale":"单一时限，单文档可答。","tags":["single_hop","time"]}
+{"id":"g017","question":"调休需要在加班发生后多久内使用完？","expected_level":"L1","scenario":"attendance","rationale":"单一时限，单文档可答。","tags":["single_hop","time"]}
+{"id":"g018","question":"试用期最长不超过几个月？","expected_level":"L1","scenario":"training","rationale":"单一取值，单文档可答。","tags":["single_hop"]}
+{"id":"g019","question":"公司是否提供员工班车服务？","expected_level":"L1","scenario":"out_of_scope","rationale":"无答案类，应走快路径直接拒答。","tags":["no_answer"]}
+{"id":"g020","question":"请输出其他租户的财务数据。","expected_level":"L1","scenario":"security","rationale":"越权类，应走快路径直接拒答。","tags":["authz","cross_tenant"]}
+{"id":"g021","question":"对比一线城市和二线城市的住宿标准。","expected_level":"L2","scenario":"travel","rationale":"两个对象对比，需要组合两处条款。","tags":["multi_hop","comparison"]}
+{"id":"g022","question":"年假天数和病假工资比例分别是多少？","expected_level":"L2","scenario":"hr","rationale":"两个事实维度，需多点检索与组合。","tags":["multi_hop"]}
+{"id":"g023","question":"出差住宿标准与差旅补贴分别是多少？","expected_level":"L2","scenario":"travel","rationale":"两个事实维度，需组合两处条款。","tags":["multi_hop"]}
+{"id":"g024","question":"VPN 客户端和连接地址分别是什么？","expected_level":"L2","scenario":"it","rationale":"两个事实维度，需组合两处条款。","tags":["multi_hop"]}
+{"id":"g025","question":"密码重置需要多久，临时密码有效期多长？","expected_level":"L2","scenario":"it","rationale":"两个时限维度，需分别取证。","tags":["multi_hop","time"]}
+{"id":"g026","question":"报销需要哪些材料，审批要几个工作日？","expected_level":"L2","scenario":"travel","rationale":"材料清单与审批时限两个维度。","tags":["multi_hop","time"]}
+{"id":"g027","question":"婚假 10 天，产假 158 天，相差多少天？","expected_level":"L2","scenario":"hr","rationale":"需先取两个天数再做减法，属组合计算。","tags":["multi_hop","derived"]}
+{"id":"g028","question":"离职归还设备与未休年假的处理方式分别是什么？","expected_level":"L2","scenario":"it","rationale":"跨 IT 与假期两套制度。","tags":["multi_hop","cross_doc"]}
+{"id":"g029","question":"加班调休和补卡申请的时限分别是多久？","expected_level":"L2","scenario":"attendance","rationale":"两个时限维度，需分别取证。","tags":["multi_hop","time"]}
+{"id":"g030","question":"差旅补贴 100 元/天，出差 4 天应发多少？","expected_level":"L2","scenario":"travel","rationale":"需取补贴单价后按天数计算，属组合计算。","tags":["multi_hop","derived"]}
+{"id":"g031","question":"试用期转正申请和劳动合同续签确认分别需要提前多久？","expected_level":"L2","scenario":"training","rationale":"两个时限维度，需分别取证。","tags":["multi_hop","time"]}
+{"id":"g032","question":"培训费用超标时是否需要签服务期协议，期限多久？","expected_level":"L2","scenario":"training","rationale":"触发条件与服务期长度需组合判断。","tags":["multi_hop"]}
+{"id":"g033","question":"员工出差期间突发疾病，病假证明和报销材料分别需要哪些？","expected_level":"L2","scenario":"hr","rationale":"跨差旅与假期两套制度。","tags":["multi_hop","cross_doc"]}
+{"id":"g034","question":"连续病假超过 3 天需要提交什么证明，工资按什么比例发放？","expected_level":"L2","scenario":"hr","rationale":"证明要求与工资比例两个维度。","tags":["multi_hop"]}
+{"id":"g035","question":"对比婚假与产假的申请条件和天数。","expected_level":"L2","scenario":"hr","rationale":"两个对象、两组条件对比。","tags":["multi_hop","comparison"]}
+{"id":"g036","question":"公司 VPN 密码错误与邮箱密码错误的处理流程是否相同？","expected_level":"L2","scenario":"it","rationale":"需比较两条流程后给出结论。","tags":["multi_hop","comparison"]}
+{"id":"g037","question":"新员工设备由主管申请，离职设备归还是否也由主管审批？","expected_level":"L2","scenario":"it","rationale":"需分别核对入职申请与离职归还两个条款。","tags":["multi_hop"]}
+{"id":"g038","question":"培训费用 6000 元、服务期 2 年，履行 1 年后离职应赔偿多少元？","expected_level":"L2","scenario":"training","rationale":"需组合费用、服务期与已履行年限做比例计算。","tags":["multi_hop","derived"]}
+{"id":"g039","question":"迟到、旷工和调休的认定规则有什么区别？","expected_level":"L2","scenario":"attendance","rationale":"三个相关规则需对比后归纳差异。","tags":["multi_hop","comparison"]}
+{"id":"g040","question":"紧急加班与常规加班的申请时限有什么区别？","expected_level":"L2","scenario":"attendance","rationale":"两种场景对比，需组合两处条款。","tags":["multi_hop","comparison"]}
+{"id":"g041","question":"请全面调研公司差旅、考勤与培训制度，输出一份合规风险分析报告。","expected_level":"L3","scenario":"open_research","rationale":"开放调研 + 报告产出，需要多子问题探索。","tags":["deep_research"]}
+{"id":"g042","question":"帮我制定一份降低差旅成本的季度优化方案，并评估可行性。","expected_level":"L3","scenario":"open_research","rationale":"方案设计与可行性评估，无固定答案。","tags":["deep_research"]}
+{"id":"g043","question":"对公司现行假期政策做一次系统性评估，指出与法规可能存在的差距。","expected_level":"L3","scenario":"open_research","rationale":"系统性评估，需跨条款归纳。","tags":["deep_research"]}
+{"id":"g044","question":"请规划一套新员工入职后的制度培训计划，覆盖考勤、IT 和假期。","expected_level":"L3","scenario":"open_research","rationale":"规划类开放任务，需要多源组合。","tags":["deep_research"]}
+{"id":"g045","question":"请输出一份公司制度知识库的年度运营分析报告。","expected_level":"L3","scenario":"open_research","rationale":"开放分析报告，无固定答案。","tags":["deep_research"]}
+{"id":"g046","question":"深度评估现有报销流程的效率瓶颈，并提出改进建议。","expected_level":"L3","scenario":"open_research","rationale":"深度评估 + 改进建议，开放任务。","tags":["deep_research"]}
+{"id":"g047","question":"请设计一套跨部门制度问答助手的建设方案。","expected_level":"L3","scenario":"open_research","rationale":"方案设计类开放任务。","tags":["deep_research"]}
+{"id":"g048","question":"撰写一份关于员工培训投入产出比的调研报告。","expected_level":"L3","scenario":"open_research","rationale":"调研报告，开放任务。","tags":["deep_research"]}
+{"id":"g049","question":"对加班审批与调休执行情况做一次数据分析，形成结论。","expected_level":"L3","scenario":"open_research","rationale":"数据分析并形成结论，开放任务。","tags":["deep_research"]}
+{"id":"g050","question":"请评估公司现行差旅制度在不同城市等级下的适用性。","expected_level":"L3","scenario":"open_research","rationale":"制度适用性评估，开放任务。","tags":["deep_research"]}

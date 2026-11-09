@@ -1,0 +1,65 @@
+[
+  {
+    "purpose": "synthesize",
+    "max_tokens": 8192,
+    "tokens_in": 1225,
+    "tokens_out": 4078,
+    "reasoning": 3008,
+    "chars": 1910,
+    "hit_cap": false
+  },
+  {
+    "purpose": "synthesize",
+    "max_tokens": 8192,
+    "tokens_in": 1223,
+    "tokens_out": 1530,
+    "reasoning": 763,
+    "chars": 1341,
+    "hit_cap": false
+  },
+  {
+    "purpose": "synthesize",
+    "max_tokens": 8192,
+    "tokens_in": 1190,
+    "tokens_out": 1154,
+    "reasoning": 625,
+    "chars": 1013,
+    "hit_cap": false
+  },
+  {
+    "purpose": "synthesize",
+    "max_tokens": 8192,
+    "tokens_in": 1224,
+    "tokens_out": 1594,
+    "reasoning": 1003,
+    "chars": 1199,
+    "hit_cap": false
+  },
+  {
+    "purpose": "synthesize",
+    "max_tokens": 8192,
+    "tokens_in": 1223,
+    "tokens_out": 1475,
+    "reasoning": 755,
+    "chars": 1474,
+    "hit_cap": false
+  },
+  {
+    "purpose": "synthesize",
+    "max_tokens": 8192,
+    "tokens_in": 1222,
+    "tokens_out": 1303,
+    "reasoning": 709,
+    "chars": 1107,
+    "hit_cap": false
+  },
+  {
+    "purpose": "synthesize",
+    "max_tokens": 8192,
+    "tokens_in": 1235,
+    "tokens_out": 1189,
+    "reasoning": 649,
+    "chars": 1048,
+    "hit_cap": false
+  }
+]

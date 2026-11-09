@@ -1,0 +1,37 @@
+services:
+  api:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      ZCAISAGENT_LLM_PROVIDER: fake
+      ZCAISAGENT_MODEL: gpt-4.1-mini
+      ZCAISAGENT_SEED_DIR: /app/data/seed
+      ZCAISAGENT_DATA_DIR: /app/.zcaisagent
+      ZCAISAGENT_API_KEY: dev-key
+    volumes:
+      - zcaisagent_data:/app/.zcaisagent
+    depends_on:
+      - postgres
+      - redis
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: zcaisagent
+      # 仅本地开发默认值，生产部署请通过环境变量覆盖
+      POSTGRES_PASSWORD: zcaisagent
+      POSTGRES_DB: zcaisagent
+    ports:
+      - "5432:5432"
+    volumes:
+      - zcaisagent_pg:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+volumes:
+  zcaisagent_data:
+  zcaisagent_pg:
