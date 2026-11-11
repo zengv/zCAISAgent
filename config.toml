@@ -1,7 +1,7 @@
 # zCAISAgent 模型路由配置
 # Python 3.11+ 的 tomllib 直接解析，零依赖。
 
-# 默认 provider：当调用方未显式指定 reasoning_effort 时，用它的等级。
+# 默认 provider：当调用方未显式指定 reasoning_effort 时直接使用。
 model_provider = "deepseek"
 
 # reasoning_effort 全量合法值；用于构建就近双向降级链。
@@ -19,7 +19,54 @@ reflect = "max"
 verify = "max"
 grade = "high"
 repair = "high"
-default = "low"
+rerank = "low"
+extract = "low"
+default = "high"
+
+# —— 语义向量检索 ——
+# enabled=true 时注册 vector 检索源（内存余弦检索，chunk 向量懒构建）；
+# 服务不可用时该源自动降级，不影响词法链路。环境变量
+# ZCAISAGENT_EMBEDDING_ENABLED 可覆盖开关。
+[embedding]
+enabled = true
+model = "qwen3.7-text-embedding-flash"
+base_url = "https://maas.qianwenaiapi.com/compatible-mode/v1"
+key_env = "AI_KEY_QW"
+
+# —— LLM 相关性重排 ——
+# enabled=true 时检索融合后重排 evidence.relevance；不可用或关闭时回退
+# 词法相关性逻辑。环境变量 ZCAISAGENT_RERANK_ENABLED 可覆盖开关。
+# 装配策略：enabled=true 且配置了 model/base_url 时优先调用专用 rerank
+# 端点；不可用时自动回退——有 [embedding] 走语义余弦重排，否则回退
+# LLM chat 打分。base_url 为完整端点 URL；style="dashscope" 用原生
+# 格式（input.query/input.documents → output.results），style="cohere"
+# 用 Jina/Cohere 兼容格式（顶层 query/documents → results）。
+[rerank]
+enabled = false
+model = "qwen3.7-text-rerank"
+base_url = "https://maas.qianwenaiapi.com/api/v1/services/rerank/text-rerank/text-rerank"
+style = "dashscope"
+key_env = "AI_KEY_QW"
+
+# —— 检索增强 ——
+# HyDE：开放问题先用模型生成假设性答案再检索；默认关闭，失败自动跳过。
+# ZCAISAGENT_HYDE_ENABLED 可覆盖开关。
+# 父子块：parent_child_enabled=true 时子块携带父块正文用于合成；
+# max_context_tokens 限制送入合成的证据正文预算，防止父块膨胀上下文。
+[retrieval]
+hyde_enabled = false
+hyde_max_tokens = 256
+parent_child_enabled = false
+parent_max_chars = 1800
+max_context_tokens = 6000
+
+# —— pgvector 持久化 ——
+# enabled=true 时启动阶段连接 Postgres 并加载 chunks；连接失败自动回退内存。
+# 密钥/DSN 从 dsn_env 指向的环境变量读取（ZCAISAGENT_DATABASE_ENABLED 可覆盖开关）。
+[database]
+enabled = false
+dsn_env = "ZCAISAGENT_DATABASE_URL"
+dimensions = 1024
 
 # —— 模型提供者定义 ——
 # key_env 是环境变量名，启动时从系统环境或 .env 里读取实际密钥；

@@ -48,7 +48,7 @@ def allowed_sources(state: RunState) -> list[str]:
 
 def build_default_skill_registry() -> InMemorySkillRegistry:
     registry = InMemorySkillRegistry()
-    # 当前只有 inmemory 检索适配器（C3 未接入向量/关键词后端），白名单先收在该源。
+    # 检索白名单：词法、BM25 关键词、语义向量、章节树与实体图五路共同支撑企业问答。
     registry.register(
         Skill(
             name="enterprise_knowledge_qa",
@@ -71,7 +71,7 @@ def build_default_skill_registry() -> InMemorySkillRegistry:
                 "考勤",
                 "请假",
             ),
-            allowed_sources=("inmemory",),
+            allowed_sources=("inmemory", "bm25", "vector", "pageindex", "graph"),
             required_scopes=("retrieve",),
             min_citation_support=0.7,
         )

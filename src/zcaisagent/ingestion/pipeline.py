@@ -17,6 +17,7 @@ def ingest_directory(
     directory: Path,
     tenant_id: str = "demo",
     acl: list[str] | None = None,
+    parent_max_chars: int | None = None,
 ) -> list[Chunk]:
     chunks: list[Chunk] = []
     if not directory.exists():
@@ -41,6 +42,7 @@ def ingest_directory(
                 acl=acl,
                 uri=str(path),
                 version=version,
+                parent_max_chars=parent_max_chars,
             )
         )
     return chunks

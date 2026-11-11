@@ -1,0 +1,5 @@
+﻿lex2(inmemory+bm25)      doc R@5=0.8195 R@10=0.939 ndcg=0.8843
+lex2+pageindex           doc R@5=0.8186 R@10=0.9195 ndcg=0.8778
+lex2+graph               doc R@5=0.8033 R@10=0.939 ndcg=0.8325
+all4                     doc R@5=0.8052 R@10=0.9195 ndcg=0.8263
+lex2+pi_direct           doc R@5=0.8186 R@10=0.9195 ndcg=0.8778

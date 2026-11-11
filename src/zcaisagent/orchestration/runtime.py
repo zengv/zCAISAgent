@@ -1,3 +1,5 @@
+import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -25,12 +27,15 @@ class RunContext:
     auth: AuthContext
     config: Any = None
     sources: RetrieverPoolPort | None = None
+    reranker: Any = None
     health: HealthPort | None = None
     guardrail: GuardrailPort | None = None
     skills: SkillRegistryPort | None = None
     tools: ToolGateway | None = None
     node_timeout_s: float = 30.0
     clock: Any = None
+    # 编排层事件出口（如 SSE）；None 时保持纯批量执行。
+    emit: Callable[[str, dict], Awaitable[None]] | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
 
@@ -71,6 +76,11 @@ class Runtime:
             before_cost = state.budget.used_cost_usd
             before_evidence = len(state.evidence)
             ctx.trace.start_step(state.step, node_name, state.run_id)
+            if ctx.emit is not None:
+                await ctx.emit(
+                    "stage",
+                    {"node": node_name, "step": state.step, "phase": "start"},
+                )
             try:
                 patch = await graph.nodes[node_name](state, ctx)
                 if ctx.health is not None:
@@ -94,6 +104,11 @@ class Runtime:
             }
             state = apply_patch(state, patch)
             await ctx.checkpoint.save(state)
+            if ctx.emit is not None:
+                await ctx.emit(
+                    "stage",
+                    {"node": node_name, "step": state.step, "phase": "end"},
+                )
             ctx.trace.end_step(
                 state,
                 {
@@ -113,4 +128,5 @@ class Runtime:
             )
 
         await ctx.checkpoint.save(state)
+        state.finished_ts = time.time()
         return state

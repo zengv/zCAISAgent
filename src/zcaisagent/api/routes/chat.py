@@ -5,11 +5,14 @@ from fastapi import APIRouter, Header, HTTPException
 from fastapi.responses import StreamingResponse
 
 from zcaisagent.api.deps import get_container
-from zcaisagent.api.schemas import CitationOut, RunRequest, RunResponse
-from zcaisagent.api.service import execute_run
+from zcaisagent.api.schemas import CitationOut, RunRequest, RunResponse, build_metrics
+from zcaisagent.api.service import build_run_state, execute_run
+from zcaisagent.container import build_context
 from zcaisagent.domain.models import RunState
 from zcaisagent.domain.stage import ticket_stage
-from zcaisagent.ports.security import AuthContext
+from zcaisagent.orchestration.build import build_default_graph
+from zcaisagent.orchestration.runtime import Runtime
+from zcaisagent.ports.security import AuditEvent, AuthContext
 
 
 router = APIRouter()
@@ -41,6 +44,7 @@ def _to_response(state: RunState) -> RunResponse:
         steps=state.step,
         mandate_id=state.mandate.id if state.mandate else None,
         limitations=answer.limitations if answer else [],
+        metrics=build_metrics(state),
     )
 
 
@@ -78,21 +82,80 @@ async def chat(
     x_api_key: str = Header(default="dev-key", alias="X-API-Key"),
 ):
     auth = await _authenticate(x_api_key, request)
-    state = await _execute(auth, request)
-    response = _to_response(state)
+    try:
+        state = await build_run_state(auth, request)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except PermissionError as exc:
+        # 不泄漏会话是否存在，统一返回无权限。
+        raise HTTPException(status_code=403, detail="thread not accessible") from exc
+
+    container = get_container()
+    ctx = build_context(container, auth)
+    queue: asyncio.Queue[tuple[str, dict]] = asyncio.Queue()
+
+    async def emit(event: str, data: dict) -> None:
+        await queue.put((event, data))
+
+    ctx.emit = emit
+
+    async def run() -> RunState:
+        result = await Runtime().execute(build_default_graph(), state, ctx)
+        await container.audit.append(
+            AuditEvent(
+                action="run.finished",
+                actor=auth.user_id,
+                tenant_id=auth.tenant_id,
+                run_id=result.run_id,
+                detail={"status": result.status.value, "steps": result.step},
+            )
+        )
+        return result
+
+    task = asyncio.create_task(run())
 
     async def event_stream():
-        yield _sse("meta", {"run_id": state.run_id, "status": state.status.value})
-        text = response.answer
-        for index in range(0, len(text), 24):
-            yield _sse("token", {"text": text[index : index + 24]})
-            await asyncio.sleep(0)
+        yield _sse(
+            "meta",
+            {
+                "run_id": state.run_id,
+                "thread_id": state.thread_id,
+                "status": state.status.value,
+            },
+        )
+        try:
+            while not (task.done() and queue.empty()):
+                try:
+                    event, data = await asyncio.wait_for(queue.get(), timeout=0.05)
+                except asyncio.TimeoutError:
+                    continue
+                yield _sse(event, data)
+            if task.cancelled():
+                return
+            error = task.exception()
+            if error is not None:
+                yield _sse("error", {"message": str(error)})
+                return
+            result = task.result()
+        except asyncio.CancelledError:
+            task.cancel()
+            raise
+        finally:
+            # 客户端断开时中止后台运行，避免继续消耗模型调用。
+            if not task.done():
+                task.cancel()
+
+        response = _to_response(result)
         yield _sse(
             "done",
             {
-                "run_id": state.run_id,
+                "run_id": response.run_id,
+                "answer": response.answer,
+                "abstained": response.abstained,
                 "citations": [c.model_dump() for c in response.citations],
                 "confidence": response.confidence,
+                "limitations": response.limitations,
+                "metrics": response.metrics.model_dump(),
             },
         )
 

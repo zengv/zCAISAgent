@@ -2,10 +2,10 @@
 
 > 通用 Agent 为内核，Agentic RAG 为内置能力：可私有化、可审计、可评估、可扩展。
 
-当前阶段：**M0 可运行骨架已落地**（方案设计 + 最小实现，46 项测试全绿）。五份方案文档 + 代码：
+当前阶段：**M1 欠账已收口**（两阶段真流式 + 多源召回/RRF/专用 rerank + HyDE 与父子块（默认关闭）+ pgvector 持久化 + 评估门禁，226 项测试全绿）。五份方案文档 + 代码：
 
-| 文档                                           | 内容                                                         | 适合谁         |
-| -------------------------------------------- | ---------------------------------------------------------- | ----------- |
+| 文档                                         | 内容                                                         | 适合谁         |
+| ------------------------------------------ | ---------------------------------------------------------- | ----------- |
 | [01 · 研究与范式分析](docs/01-research-cais.md)   | 通用 Agent / Agentic RAG / CAIS 的统一模型；图中流程逐节点优劣分析；能力分级 L0-L3 | 产品、架构、技术负责人 |
 | [02 · 产品层方案](docs/02-product.md)           | 定位、用户与场景、功能地图（MVP/V1/V2）、指标与验收、路线图                         | 产品、业务、管理层   |
 | [03 · 技术架构方案](docs/03-architecture.md)     | 分层架构、运行时模型、领域模型与端口契约、检索/工具/记忆/编排/治理/评估/可观测、部署与配置           | 研发、架构       |
@@ -53,6 +53,89 @@ flowchart TB
 
 ***
 
+## 检索路由链路
+
+检索是运行时的一个 action，不是固定阶段。入口先按问题复杂度分级，再决定"是否检索、检索几轮、失败如何升级"。
+
+```mermaid
+flowchart TB
+    A["analyze<br/>意图 / 复杂度 / 时效判定<br/>低置信度时由 LLM 复核"] --> R{"route<br/>自主性分级"}
+    R -->|"不安全"| AB["abstain 拒答"]
+    R -->|"闲聊 L0"| DA["direct_answer<br/>不检索"]
+    R -->|"L1 单跳"| RV["retrieve<br/>改写变体 × 启用源 并行召回"]
+    R -->|"L2/L3 多跳"| P["plan<br/>子问题拆解 2 / 5 个"]
+    P --> AC["act<br/>逐子问题多源并行检索"]
+    AC --> OB["observe<br/>归一为 Evidence + 护栏过滤"]
+    OB --> RF{"reflect<br/>仍有未执行步骤?"}
+    RF -->|"continue"| AC
+    RF -->|"complete"| G
+    RV --> F["RRF 加权融合"]
+    F --> RR["rerank<br/>专用端点 → 语义余弦 → LLM 打分"]
+    G["grade<br/>相关性 / 权威 / 新鲜度 / 一致性<br/>+ 充分性判定"]
+    RR --> G
+    G -->|"sufficient / conflict"| SY["synthesize → verify"]
+    G -->|"insufficient"| RP["repair"]
+    G -->|"无证据 / 无进展"| AB
+    SY --> VF{"verify 通过?"}
+    VF -->|"是"| OK["respond"]
+    VF -->|"否"| RP
+    RP -->|"第 1 轮：补检索"| RV
+    RP -->|"第 2 轮：改写"| SY
+    RP -->|"降级交付"| OK
+    RP -->|"预算不足 / 无进展"| AB
+```
+
+**入口分级**（`analyze` 判定；非闲聊问题若规则置信度低于 0.5，再由 LLM 复核）：
+
+| 等级 | 判定依据 | 检索编排 |
+| --- | --- | --- |
+| L0 直答 | 闲聊、问候、无需外部信息 | 不检索，直接 `direct_answer` |
+| L1 快路径 | 单一事实、单跳（默认档） | `retrieve` 一次：改写变体 × 全部启用源并行 → 融合 → 重排 |
+| L2 多步 | 对比、操作指引、并列多跳、需取数推算 | `plan` 拆 2 个子问题，逐个 `act` 并行检索，`reflect` 收口后统一评分 |
+| L3 深度 | 分析、调研、方案、规划、报告 | 同 L2，子问题上限 5 个 |
+
+**查询改写分级**（`rewrite_queries`，原 query 永远保留且排第一）：
+
+| 复杂度 | 变体 |
+| --- | --- |
+| `simple` | 仅原 query；问题较长且含疑问虚词时追加一条 `light`（去"是什么/多少/怎么"等） |
+| `multi_hop` | 原 query + `light` + 按"和 / 与 / 、 / ；/ 以及"拆出至多 3 条 `multi_N` |
+| `open` | 原 query + 按句读拆出至多 3 条 `decompose_N` |
+| `open` + HyDE | 开启 `hyde_enabled` 时追加一条 `hyde` 变体（假设性答案，仅用于召回，失败自动跳过） |
+
+**单次检索内部链路**（`retrieve` 节点）：
+
+1. **选源**：`SourceRegistry` 取启用源（按 priority 排序）；命中 Skill 时用其 `allowed_sources` 再收窄；每个源自身完成 tenant / ACL / 版本（同文档族只留最高版本）过滤。
+2. **并行召回**：`query 变体 × 源` 全部并发，单源超时或异常只记 `degraded`，不阻断其余源。
+3. **RRF 加权融合**：`k=60`；`inmemory` / `bm25` / `vector` / `pgvector` 权重 1.0，`pageindex` / `graph` 权重 0.5；内容相同的片段合并为一条，跨源出处记入 `metadata.sources`。
+4. **重排**：`FallbackReranker` 优先调专用端点（`style="dashscope"` 原生格式 / `"cohere"` Jina 兼容），失败后记忆切换至 embedding 语义余弦，再回退 LLM chat 打分；分数直接写入 `evidence.relevance` 并透传给 `grade`，全部失败则保留词法相关性。
+5. **护栏过滤**：`guardrail.check_evidence` 隔离违规片段并写入轨迹。
+6. **评分与充分性**：`0.45×相关性 + 0.25×权威 + 0.15×新鲜度 + 0.15×一致性`；`final ≥ 0.30` 保留，`≥ 0.40` 且覆盖问题主题才算达标证据；任一条达标即 `sufficient`，高相似但数字互斥则 `conflict`，否则 `insufficient`。
+7. **不足升级**（最多 2 轮修复）：第 1 轮定向补检索（`goal + 首个未被支撑的 claim`），第 2 轮严格改写；补检索后证据数未增加判 `no_progress` 直接拒答，剩余预算不够走完一轮也直接拒答。
+8. **上下文打包**：`context_pack` 按可信度排序、剔除 `drop`、父块正文替换子块，按 `max_context_tokens` 截断（至少保留 1 条）。
+
+**检索源**（`capabilities/retrieval/sources/`，全部实现 tenant/ACL/版本过滤与降级）：
+
+| 源           | 类型  | 说明                                |
+| ----------- | --- | --------------------------------- |
+| `inmemory`  | 词法  | overlap 比例打分，常驻默认                 |
+| `bm25`      | 关键词 | SQLite FTS5，中文单字+二元组展开            |
+| `vector`    | 语义  | embedding 余弦，服务不可用自动降级            |
+| `pgvector`  | 语义  | 持久化向量检索，需启用 `[database]`，不可用自动回退内存   |
+| `pageindex` | 结构  | markdown 章节树导航，默认停用               |
+| `graph`     | 关联  | LLM 实体关系图 + 一跳邻居，失败补抽 + 磁盘缓存，默认停用 |
+
+**评测基线**（golden 集 100 案例，`retrieval-eval`）：
+
+| 配置                                | doc Recall\@5 | doc Recall\@10 | doc NDCG\@10 |
+| --------------------------------- | ------------- | -------------- | ------------ |
+| 词法两路（基线）                          | 0.8195        | 0.9390         | 0.8843       |
+| **词法 + vector + 专用 rerank（当前默认）** | **0.9100**    | **0.9971**     | **0.9525**   |
+
+**重排端点**：`rerank-server` 子命令可启动本地 `/v1/rerank` 兼容端点，供 `[rerank] base_url` 指向本机；无专用端点时按上述回退链降级。
+
+***
+
 ## 扩展接口（详见 [03 §18](docs/03-architecture.md)）
 
 | 接口                  | 现状                     | 说明                                             | 里程碑   |
@@ -91,23 +174,70 @@ $env:PYTHONPATH="src"
 python -m zcaisagent.cli ask "一线城市住宿标准是多少？"
 python -m pytest
 python -m zcaisagent.cli eval data/eval/golden.jsonl
+python -m zcaisagent.cli retrieval-eval --source fused          # 检索评测（fused 或任一源名）
+python -m zcaisagent.cli retrieval-eval --source fused --rerank # 融合后重排评测
+python -m zcaisagent.cli eval-gate --path data/eval/golden.jsonl  # 评估门禁（违规返回 1）
+python -m zcaisagent.cli index build                            # 构建 pgvector 索引（需启用 [database]）
+python -m zcaisagent.cli index stats                            # 查看索引块数 / 租户数 / 维度
+python -m zcaisagent.cli rerank-server --port 8090              # 本地 /v1/rerank 兼容端点
 uvicorn zcaisagent.api.app:app --reload --port 8080
 ```
 
-配置默认从项目根目录的 `.env` 读取（进程环境变量优先）。模型提供者在 `config.toml`
-定义，密钥经 `.env` / 系统环境变量注入（如 `AI_KEY_DS`）；未配置 provider 时回退
-`FakeLLM`，无需 API Key 即可跑通。
+配置默认从项目根目录的 `.env` 读取（进程环境变量优先）。`.env` 只放密钥等运行参数，
+模型路由全部在 `config.toml` 定义，密钥经 `key_env` 指定的环境变量注入（如 `AI_KEY_DS`）；
+一个 provider 都没配置时回退 `FakeLLM`，无需 API Key 即可跑通。
 
-模型配置支持多个模型集，每个集含主模型与备用链（主模型调用失败时按序降级）：
+模型选择由「是否显式指定 `reasoning_effort`」决定：
 
-```dotenv
-ZCAISAGENT_MODEL_SET=high            # 切换模型集：default | low | high | max
-ZCAISAGENT_MODEL_SETS=default,low,high,max
-ZCAISAGENT_MODEL_HIGH=deepseek-reasoner
-ZCAISAGENT_MODEL_HIGH_FALLBACKS=deepseek-chat,deepseek-flash
+```toml
+model_provider = "deepseek"              # 调用方未指定 reasoning_effort 时直接使用
+effort_levels = ["low", "high", "max"]   # 合法等级，同时决定降级顺序
+
+[purpose_effort]                         # 仅在没有默认 provider 时兜底
+synthesize = "low"
+analyze = "high"
+default = "low"
+
+[model_providers.deepseek]               # 一个 provider 绑定一个等级
+model = "deepseek-flash"
+base_url = "https://api.deepseek.com"
+key_env = "AI_KEY_DS"
+reasoning_effort = "high"
 ```
 
-改 `ZCAISAGENT_MODEL_SET` 一行即可切换主模型；未配置的集回退到 `default`。
+调用方显式传 `reasoning_effort` 时，在该等级的全部 provider 中按配置顺序选主模型；未传时
+直接使用 `model_provider`。两种情况都带降级：主模型调用失败后先尝试同等级其余 provider，
+再按 `effort_levels` 向邻近等级双向扩展（如 `high → low → max`）。
+
+检索相关服务在 `config.toml` 配置：`[embedding]`（语义向量源与语义重排）、
+`[rerank]`（专用 rerank 端点，`style="dashscope"|"cohere"`，不可用自动回退）。
+详细策略见上文「检索路由链路」。
+
+### 控制台（启动后端 + 打开前端）
+
+Windows 双击 [~start-backend.bat](./~start-backend.bat)（或在项目根目录执行 `.\~start-backend.bat`），按菜单选择操作：
+
+```powershell
+.\~start-backend.bat
+# 1 = 启动   2 = 重启   0 = 停止   Q = 退出
+```
+
+脚本行为：
+
+1. 依次探测 `.venv` → PATH 中的 `python` → 当前 conda 环境 → `python3`，取第一个能 `import click, uvicorn` 的解释器；
+2. 以 `uvicorn zcaisagent.api.app:app --host 127.0.0.1 --port 8080` 后台启动，`PYTHONPATH` 指向 `src`；
+3. 轮询 8080 端口，确认监听成功后打印访问地址；停止/重启按 8080 的监听进程处理，无需手动找 PID。
+
+启动后浏览器打开 <http://127.0.0.1:8080/>，即控制台页面：由 FastAPI 同源托管 `api/static/chat.html`，可直接多轮对话、查看答案与引用来源，无需单独启动前端。首次使用在左侧「X-API-Key」填写密钥（默认 `dev-key`，可用环境变量 `ZCAISAGENT_API_KEY` 覆盖）。
+
+日志：`.zcaisagent/backend.log`（stderr）与 `.zcaisagent/backend.log.out`（stdout）；启动失败时先看这里。
+
+等价手动启动：
+
+```powershell
+$env:PYTHONPATH="src"
+uvicorn zcaisagent.api.app:app --reload --port 8080
+```
 
 ***
 
@@ -115,7 +245,7 @@ ZCAISAGENT_MODEL_HIGH_FALLBACKS=deepseek-chat,deepseek-flash
 
 | 术语               | 含义                                                              |
 | ---------------- | --------------------------------------------------------------- |
-| **zCAISAgent**       | 本项目：通用 Agent 运行时，内置检索、工具、代码、浏览、文件、记忆、Skill 与调度能力                |
+| **zCAISAgent**   | 本项目：通用 Agent 运行时，内置检索、工具、代码、浏览、文件、记忆、Skill 与调度能力                |
 | **CAIS**         | Compound AI Systems，复合 AI 系统：用多个交互组件（多模型、检索器、工具、记忆、编排）完成任务的系统范式 |
 | **Agentic RAG**  | 由 LLM 在运行时决定检索行为的 RAG 系统；检索是 action 而非固定阶段                      |
 | **Enhanced RAG** | 固定管线 + 路由/改写/重排等增强模块，控制权仍在代码                                    |
@@ -130,7 +260,7 @@ ZCAISAGENT_MODEL_HIGH_FALLBACKS=deepseek-chat,deepseek-flash
 
 ***
 
-## 已确认决策（2026-11-05）
+## 已确认决策
 
 | #  | 决策     | 确认结果                                        |
 | -- | ------ | ------------------------------------------- |
@@ -147,11 +277,11 @@ ZCAISAGENT_MODEL_HIGH_FALLBACKS=deepseek-chat,deepseek-flash
 
 ## 文档状态
 
-| 项        | 状态                   |
-| -------- | -------------------- |
-| 研究结论     | ✅ 完成                 |
-| 图中流程优劣分析 | ✅ 完成                 |
-| 产品层方案    | ✅ 已完成并确认（Q1-Q6 基线）   |
-| 技术架构方案   | ✅ 完成                 |
-| 工程落地计划   | ✅ 完成                 |
-| 代码实现     | ✅ M0 可运行骨架（46 项测试通过） |
+| 项        | 状态                                      |
+| -------- | --------------------------------------- |
+| 研究结论     | ✅ 完成                                    |
+| 图中流程优劣分析 | ✅ 完成                                    |
+| 产品层方案    | ✅ 已完成并确认（Q1-Q6 基线）                      |
+| 技术架构方案   | ✅ 完成                                    |
+| 工程落地计划   | ✅ 完成                                    |
+| 代码实现     | ✅ M0 骨架 + Agentic RAG 检索链路 + M1 欠账收口（226 项测试通过） |

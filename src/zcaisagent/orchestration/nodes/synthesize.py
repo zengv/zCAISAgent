@@ -1,6 +1,7 @@
 import json
 import re
 
+from zcaisagent.capabilities.retrieval.context_pack import pack as pack_evidence
 from zcaisagent.domain.enums import AutonomyLevel
 from zcaisagent.domain.models import Answer, Budget, Claim, Message, RunState
 from zcaisagent.domain.patch import StatePatch
@@ -72,13 +73,20 @@ def _evidence_block(evidence: list) -> str:
     return "\n".join(lines)
 
 
-def _pack(evidence: list, limit: int) -> list:
-    """按可信度排序打包，丢弃低分证据。"""
-    ranked = sorted(
-        evidence, key=lambda item: (item.final_score, item.score), reverse=True
-    )
-    kept = [item for item in ranked if item.grade != "drop"]
-    return kept[:limit] if limit > 0 else kept
+_STREAM_INSTRUCTION = "直接输出答案正文，不要输出 JSON。"
+_CLAIMS_SYSTEM = (
+    "你是 zCAISAgent。只依据 <evidence> 中的资料抽取结论；不得编造。"
+    "输出 JSON：{\"claims\": [{\"text\": string, \"evidence_ids\": [string]}]}。"
+)
+
+
+class _StreamFallback(Exception):
+    """流式两阶段不可用时回退到单次 JSON 合成。"""
+
+
+def _pack(evidence: list, limit: int, max_tokens: int = 6000) -> list:
+    """按可信度与 token 预算打包，父块正文覆盖子块正文。"""
+    return pack_evidence(evidence, max_tokens=max_tokens, max_items=limit)
 
 
 def _recover(text: str) -> Answer:
@@ -131,6 +139,42 @@ def _parse_answer(text: str) -> Answer:
     )
 
 
+def _parse_claims(text: str) -> list[Claim] | None:
+    """解析 claims 抽取输出；None 表示无法解析（触发流式回退）。"""
+    match = _JSON_OBJECT.search(text)
+    payload = None
+    if match:
+        try:
+            payload = json.loads(match.group(0))
+        except json.JSONDecodeError:
+            payload = None
+    if isinstance(payload, dict) and isinstance(payload.get("claims"), list):
+        claims: list[Claim] = []
+        for index, raw in enumerate(payload["claims"]):
+            if not isinstance(raw, dict) or not raw.get("text"):
+                continue
+            ids = [str(item) for item in (raw.get("evidence_ids") or [])]
+            claims.append(Claim(id=f"c{index}", text=str(raw["text"]), evidence_ids=ids))
+        return claims
+
+    found = list(_CLAIM_FIELD.finditer(text))
+    if not found:
+        return None
+    claims = []
+    for index, item in enumerate(found):
+        ids = re.findall(r'"((?:[^"\\]|\\.)*)"', item.group(2))
+        if not ids:
+            continue
+        claims.append(
+            Claim(
+                id=f"c{index}",
+                text=_unescape(item.group(1)).strip(),
+                evidence_ids=[_unescape(eid) for eid in ids],
+            )
+        )
+    return claims
+
+
 def _needs_retry(answer: Answer) -> bool:
     return not answer.text.strip() or not answer.claims
 
@@ -140,6 +184,9 @@ def _charge(budget: Budget, response: LLMResponse) -> Budget:
         update={
             "used_llm_calls": budget.used_llm_calls + 1,
             "used_tokens": budget.used_tokens + response.tokens_in + response.tokens_out,
+            "used_tokens_in": budget.used_tokens_in + response.tokens_in,
+            "used_tokens_out": budget.used_tokens_out + response.tokens_out,
+            "used_cached_tokens": budget.used_cached_tokens + response.cached_tokens,
             "used_cost_usd": budget.used_cost_usd + response.cost_usd,
         }
     )
@@ -147,7 +194,8 @@ def _charge(budget: Budget, response: LLMResponse) -> Budget:
 
 async def synthesize_node(state: RunState, ctx: RunContext) -> StatePatch:
     limit = int(getattr(ctx.config, "max_evidence_in_context", 8))
-    evidence = _pack(state.evidence, limit)
+    max_tokens = int(getattr(ctx.config, "max_context_tokens", 6000))
+    evidence = _pack(state.evidence, limit, max_tokens)
     system = _SYSTEM
     skill = state.analysis.get("skill") or {}
     if skill.get("matched") and skill.get("instructions"):
@@ -160,6 +208,19 @@ async def synthesize_node(state: RunState, ctx: RunContext) -> StatePatch:
         f"资料：\n{_evidence_block(evidence)}\n\n"
         "请基于资料作答，并给出 claims 与 evidence_ids。"
     )
+    if getattr(ctx, "emit", None) is not None:
+        try:
+            return await _streaming_synthesize(state, ctx, evidence, system, prompt)
+        except _StreamFallback as exc:
+            patch = await _complete_synthesize(state, ctx, system, prompt)
+            patch.append_notes = [*patch.append_notes, f"stream_fallback:{exc}"]
+            return patch
+    return await _complete_synthesize(state, ctx, system, prompt)
+
+
+async def _complete_synthesize(
+    state: RunState, ctx: RunContext, system: str, prompt: str
+) -> StatePatch:
     messages = [
         Message(role="system", content=system),
         Message(role="user", content=prompt),
@@ -210,5 +271,77 @@ async def synthesize_node(state: RunState, ctx: RunContext) -> StatePatch:
         answer=answer,
         budget=budget,
         append_message=Message(role="assistant", content=answer.text),
+        append_notes=notes,
+    )
+
+
+async def _streaming_synthesize(
+    state: RunState, ctx: RunContext, evidence: list, system: str, prompt: str
+) -> StatePatch:
+    """两阶段流式：先流正文，再单独抽取 claims。"""
+    assert ctx.emit is not None
+    timeout_s = _timeout_s(state.level, getattr(ctx.config, "node_timeout_s", None))
+
+    pieces: list[str] = []
+    final: LLMResponse | None = None
+    async for delta in ctx.llm.stream(
+        LLMRequest(
+            messages=[
+                Message(role="system", content=system + _STREAM_INSTRUCTION),
+                Message(role="user", content=prompt),
+            ],
+            purpose="synthesize_answer",
+            max_tokens=_max_tokens(state.level),
+            timeout_s=timeout_s,
+        )
+    ):
+        if delta.text:
+            pieces.append(delta.text)
+            await ctx.emit("token", {"text": delta.text})
+        if delta.final is not None:
+            final = delta.final
+
+    text = "".join(pieces).strip()
+    if not text:
+        raise _StreamFallback("empty_answer")
+
+    response = final.model_copy(update={"text": text}) if final else LLMResponse(text=text)
+    budget = _charge(state.budget, response)
+    notes = ["synthesized"]
+    if final is None or (final.tokens_in == 0 and final.tokens_out == 0):
+        notes.append("stream_usage_missing")
+
+    claims_response = await ctx.llm.complete(
+        LLMRequest(
+            messages=[
+                Message(role="system", content=_CLAIMS_SYSTEM),
+                Message(
+                    role="user",
+                    content=(
+                        f"问题：{state.goal}\n\n答案：\n{text}\n\n"
+                        f"资料：\n{_evidence_block(evidence)}\n\n"
+                        "请抽取答案中的结论，并给出对应的 evidence_ids。"
+                    ),
+                ),
+            ],
+            purpose="synthesize_claims",
+            max_tokens=1024,
+            timeout_s=timeout_s,
+            disable_thinking=True,
+        )
+    )
+    budget = _charge(budget, claims_response)
+    claims = _parse_claims(claims_response.text)
+    if claims is None:
+        raise _StreamFallback("claims_unparsed")
+
+    return StatePatch(
+        answer=Answer(
+            text=text,
+            claims=claims,
+            confidence="medium" if claims else "low",
+        ),
+        budget=budget,
+        append_message=Message(role="assistant", content=text),
         append_notes=notes,
     )

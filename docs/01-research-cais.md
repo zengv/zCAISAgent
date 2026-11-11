@@ -1,6 +1,7 @@
 # 01 · 通用 Agent × Agentic RAG × 复合 AI 系统（CAIS）研究与范式分析
 
 > 版本：v1.0 ｜ 日期：2026-11-05 ｜ 适用范围：`zCAISAgent` 项目的产品与技术决策依据
+> 实现状态（2026-11-10）：本文论证的"证据闭环 + 预算驱动"与多源融合/重排/评测已在检索链路升级中落地，当前进展见 [README](../README.md)
 > 输入素材：`Agentic RAG.gif`（Traditional RAG vs. Agentic RAG，DailyDoseOfDS）
 > 产出目标：回答"为什么这样设计"，为 `02-product.md` 与 `03-architecture.md` 提供论证基础
 

@@ -94,6 +94,41 @@ def _resolve_key(key_env: str, env: dict[str, str]) -> str:
     return env.get(key_env, "")
 
 
+@dataclass(frozen=True)
+class EmbeddingConfig:
+    """语义向量服务配置；None 表示未启用，vector 检索源不注册。"""
+
+    model: str
+    base_url: str
+    api_key: str
+
+
+@dataclass(frozen=True)
+class DatabaseConfig:
+    """pgvector/Postgres 持久化配置；None 表示未启用（纯内存）。"""
+
+    enabled: bool
+    dsn: str
+    dimensions: int = 1024
+
+
+@dataclass(frozen=True)
+class RerankConfig:
+    """专用 rerank 端点配置；网关不支持时容器自动回退语义余弦重排。
+
+    base_url 为完整端点 URL；style 决定请求/响应格式：
+    - "dashscope"：POST base_url，body {"model", "input": {"query", "documents"}}，
+      响应 output.results[].relevance_score；
+    - "cohere"：POST base_url，body {"model", "query", "documents"}，
+      响应 results[].relevance_score（Jina/Cohere 兼容）。
+    """
+
+    model: str
+    base_url: str
+    api_key: str
+    style: str = "dashscope"
+
+
 def _build_providers(cfg: dict, env: dict[str, str]) -> dict[str, ModelProvider]:
     raw = cfg.get("model_providers", {}) or {}
     providers: dict[str, ModelProvider] = {}
@@ -167,6 +202,22 @@ class Settings:
     purpose_effort: dict[str, Effort] = field(default_factory=dict)
     effort_levels: list[Effort] = field(default_factory=lambda: ["low", "high", "max"])
     llm_provider: str = "openai"
+    # 语义向量检索；None 表示未启用。
+    embedding: EmbeddingConfig | None = None
+    # 专用 rerank 端点；None 表示未配置（回退语义余弦 / LLM 打分）。
+    rerank: RerankConfig | None = None
+    # rerank 总开关：无专用端点时控制回退重排器是否启用。
+    rerank_enabled: bool = False
+    # HyDE：开放问题用假设性答案扩展查询；默认关闭，避免额外模型调用。
+    hyde_enabled: bool = False
+    hyde_max_tokens: int = 256
+    # 父子块：子块入库、父块随子块携带；默认关闭以保持既有切分口径。
+    parent_child_enabled: bool = False
+    parent_max_chars: int = 1800
+    # 合成阶段证据正文的 token 预算（配合父块扩展防止上下文膨胀）。
+    max_context_tokens: int = 6000
+    # pgvector 持久化；None 表示未启用（纯内存，行为与旧版一致）。
+    database: DatabaseConfig | None = None
 
     # —— 运行参数 ——
     api_key: str = "dev-key"
@@ -227,11 +278,78 @@ class Settings:
         effort_levels: list[Effort] = list(cfg.get("effort_levels") or ["low", "high", "max"])
         default_provider_id = cfg.get("model_provider", "")
 
+        # 语义向量检索：config.toml [embedding] enabled=true 时启用；
+        # 环境变量 ZCAISAGENT_EMBEDDING_ENABLED / ZCAISAGENT_RERANK_ENABLED 可覆盖开关。
+        embedding: EmbeddingConfig | None = None
+        raw_embedding = cfg.get("embedding", {}) or {}
+        embed_on = bool(raw_embedding.get("enabled", False))
+        if os.getenv(f"{ENV_PREFIX}EMBEDDING_ENABLED"):
+            embed_on = os.getenv(f"{ENV_PREFIX}EMBEDDING_ENABLED", "").lower() in {"1", "true", "yes"}
+        if embed_on:
+            embedding = EmbeddingConfig(
+                model=raw_embedding["model"],
+                base_url=raw_embedding["base_url"].rstrip("/"),
+                api_key=_resolve_key(raw_embedding.get("key_env", ""), env),
+            )
+        rerank_enabled = bool((cfg.get("rerank", {}) or {}).get("enabled", False))
+        if os.getenv(f"{ENV_PREFIX}RERANK_ENABLED"):
+            rerank_enabled = os.getenv(f"{ENV_PREFIX}RERANK_ENABLED", "").lower() in {"1", "true", "yes"}
+
+        raw_retrieval = cfg.get("retrieval", {}) or {}
+        hyde_enabled = bool(raw_retrieval.get("hyde_enabled", False))
+        if os.getenv(f"{ENV_PREFIX}HYDE_ENABLED"):
+            hyde_enabled = os.getenv(f"{ENV_PREFIX}HYDE_ENABLED", "").lower() in {"1", "true", "yes"}
+        hyde_max_tokens = int(raw_retrieval.get("hyde_max_tokens", 256))
+        parent_child_enabled = bool(raw_retrieval.get("parent_child_enabled", False))
+        if os.getenv(f"{ENV_PREFIX}PARENT_CHILD_ENABLED"):
+            parent_child_enabled = os.getenv(
+                f"{ENV_PREFIX}PARENT_CHILD_ENABLED", ""
+            ).lower() in {"1", "true", "yes"}
+        parent_max_chars = int(raw_retrieval.get("parent_max_chars", 1800))
+        max_context_tokens = int(raw_retrieval.get("max_context_tokens", 6000))
+
+        # pgvector 持久化：连接失败由容器回退内存，这里只负责装配配置。
+        database: DatabaseConfig | None = None
+        raw_database = cfg.get("database", {}) or {}
+        db_enabled = bool(raw_database.get("enabled", False))
+        if os.getenv(f"{ENV_PREFIX}DATABASE_ENABLED"):
+            db_enabled = os.getenv(f"{ENV_PREFIX}DATABASE_ENABLED", "").lower() in {
+                "1",
+                "true",
+                "yes",
+            }
+        if db_enabled:
+            dsn_env = str(raw_database.get("dsn_env", f"{ENV_PREFIX}DATABASE_URL"))
+            database = DatabaseConfig(
+                enabled=True,
+                dsn=env.get(dsn_env, ""),
+                dimensions=int(raw_database.get("dimensions", 1024)),
+            )
+        # [rerank] 段带 model/base_url 时视为专用 rerank 端点配置。
+        rerank: RerankConfig | None = None
+        raw_rerank = cfg.get("rerank", {}) or {}
+        if rerank_enabled and raw_rerank.get("model") and raw_rerank.get("base_url"):
+            rerank = RerankConfig(
+                model=raw_rerank["model"],
+                base_url=raw_rerank["base_url"],
+                api_key=_resolve_key(raw_rerank.get("key_env", ""), env),
+                style=str(raw_rerank.get("style", "dashscope")),
+            )
+
         return cls(
             model_provider=default_provider_id,
             model_providers=providers,
             purpose_effort=purpose_effort,
             effort_levels=effort_levels,
+            embedding=embedding,
+            rerank=rerank,
+            rerank_enabled=rerank_enabled,
+            hyde_enabled=hyde_enabled,
+            hyde_max_tokens=hyde_max_tokens,
+            parent_child_enabled=parent_child_enabled,
+            parent_max_chars=parent_max_chars,
+            max_context_tokens=max_context_tokens,
+            database=database,
             llm_provider="openai" if providers else "fake",
             api_key=env.get(f"{ENV_PREFIX}API_KEY", "dev-key"),
             default_tenant=env.get(f"{ENV_PREFIX}DEFAULT_TENANT", "demo"),

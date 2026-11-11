@@ -1,0 +1,6 @@
+correct_rate = 0.90
+citation_support = 0.85
+faithfulness = 0.80
+context_recall = 0.85
+abstain_accuracy = 0.90
+allow_failed = 0

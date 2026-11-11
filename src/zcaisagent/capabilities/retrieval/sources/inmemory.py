@@ -13,7 +13,7 @@ def _family_and_version(chunk: Chunk) -> tuple[str, str | None]:
     return family, chunk.version or parsed
 
 
-def _current_versions(chunks: list[Chunk]) -> list[Chunk]:
+def current_versions(chunks: list[Chunk]) -> list[Chunk]:
     """同一文档族只保留最高版本，避免新旧版本混合召回；无版本号的文档原样保留。"""
     latest: dict[str, tuple[int, ...]] = {}
     for chunk in chunks:
@@ -57,7 +57,7 @@ class InMemoryRetriever:
             and (not chunk.acl or bool(set(chunk.acl) & acl))
         ]
         # 版本过滤先于打分召回：默认只检索当前生效版本。
-        candidates = _current_versions(candidates)
+        candidates = current_versions(candidates)
         scored = [
             (overlap_ratio(req.query, f"{chunk.title} {chunk.content}"), chunk)
             for chunk in candidates
@@ -78,6 +78,7 @@ class InMemoryRetriever:
                 authority="secondary",
                 version=_family_and_version(chunk)[1],
                 metadata={"doc_id": chunk.doc_id, "index": chunk.index},
+                parent_content=chunk.parent_content,
             )
             for score, chunk in scored[: req.top_k]
         ]

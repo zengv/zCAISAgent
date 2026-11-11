@@ -140,3 +140,82 @@ def test_falls_back_to_next_provider_in_chain(monkeypatch) -> None:
     response = asyncio.run(llm.complete(request))
     assert _FailThenSucceedClient.calls == ["primary", "backup"]
     assert response.text == "ok"
+
+
+class _RecordingClient:
+    calls: list[str] = []
+
+    def __init__(self, *args, **kwargs) -> None:
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        return False
+
+    async def post(self, *args, json: dict, **kwargs):
+        self.calls.append(json["model"])
+        return _FakeResponse()
+
+
+def test_default_provider_wins_over_purpose_mapping(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "zcaisagent.adapters.llm.openai_compat.httpx.AsyncClient", _RecordingClient
+    )
+    _RecordingClient.calls = []
+
+    # model_provider 是 high 等级，purpose 映射却指向 low：未显式指定 effort
+    # 时应直接使用默认 provider，而不是按 purpose 选 low。
+    provs = {
+        "low": ModelProvider(
+            id="low", name="low", model="low-model",
+            base_url="http://example/v1", api_key="k", context_window=128000,
+            reasoning_effort="low",
+        ),
+        "high": ModelProvider(
+            id="high", name="high", model="high-model",
+            base_url="http://example/v1", api_key="k", context_window=128000,
+            reasoning_effort="high",
+        ),
+    }
+    settings = Settings(
+        model_provider="high",
+        model_providers=provs,
+        purpose_effort={"default": "low"},
+    )
+    llm = OpenAICompatLLM(settings=settings)
+    request = LLMRequest(messages=[Message(role="user", content="hi")])
+    asyncio.run(llm.complete(request))
+    assert _RecordingClient.calls == ["high-model"]
+
+
+def test_explicit_effort_overrides_default_provider(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "zcaisagent.adapters.llm.openai_compat.httpx.AsyncClient", _RecordingClient
+    )
+    _RecordingClient.calls = []
+
+    provs = {
+        "low": ModelProvider(
+            id="low", name="low", model="low-model",
+            base_url="http://example/v1", api_key="k", context_window=128000,
+            reasoning_effort="low",
+        ),
+        "high": ModelProvider(
+            id="high", name="high", model="high-model",
+            base_url="http://example/v1", api_key="k", context_window=128000,
+            reasoning_effort="high",
+        ),
+    }
+    settings = Settings(
+        model_provider="high",
+        model_providers=provs,
+        purpose_effort={"default": "low"},
+    )
+    llm = OpenAICompatLLM(settings=settings)
+    request = LLMRequest(
+        messages=[Message(role="user", content="hi")], reasoning_effort="low"
+    )
+    asyncio.run(llm.complete(request))
+    assert _RecordingClient.calls == ["low-model"]

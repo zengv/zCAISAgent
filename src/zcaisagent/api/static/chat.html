@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>zCAISAgent · 控制台</title>
-<link rel="icon" href="data:,">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🤖</text></svg>">
 <style>
   :root {
     --paper: #0f110e;
@@ -307,6 +307,7 @@
   .msg { animation: rise .35s ease both; }
 
   .msg.user {
+    position: relative;
     align-self: flex-end;
     max-width: 72%;
     background: var(--panel-2);
@@ -317,6 +318,40 @@
     line-height: 1.7;
     white-space: pre-wrap;
     word-break: break-word;
+  }
+
+  /* 用户消息的复制 / 修改图标 */
+  .msg-actions {
+    position: absolute;
+    right: 2px;
+    bottom: -24px;
+    display: flex;
+    gap: 6px;
+    opacity: 0;
+    transition: opacity .18s;
+  }
+
+  .msg.user:hover .msg-actions,
+  .msg-actions:focus-within { opacity: 1; }
+
+  .icon-btn {
+    display: grid;
+    place-items: center;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    color: var(--muted);
+  }
+
+  .icon-btn:hover { color: var(--gold); border-color: var(--gold); }
+
+  .icon-btn.copied { color: var(--ok); border-color: rgba(143, 191, 106, .4); }
+
+  @media (hover: none) {
+    .msg-actions { opacity: 1; }
   }
 
   .msg.agent {
@@ -427,6 +462,112 @@
     color: var(--gold);
     margin-bottom: 4px;
   }
+
+  /* 执行步骤（默认折叠） */
+  .steps {
+    margin-top: 14px;
+    border-top: 1px solid var(--line);
+    padding-top: 10px;
+  }
+
+  .steps > summary,
+  .step > summary {
+    list-style: none;
+    cursor: pointer;
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+  }
+
+  .steps > summary::-webkit-details-marker,
+  .step > summary::-webkit-details-marker { display: none; }
+
+  .steps > summary::before,
+  .step > summary::before {
+    content: "▸";
+    flex: none;
+    font-size: 9px;
+    color: var(--muted);
+    transition: transform .18s;
+  }
+
+  .steps[open] > summary::before,
+  .step[open] > summary::before { transform: rotate(90deg); }
+
+  .steps > summary {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  .steps > summary:hover { color: var(--gold); }
+
+  .step-list {
+    display: grid;
+    gap: 8px;
+    margin-top: 10px;
+  }
+
+  .step {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 8px 12px;
+  }
+
+  .step > summary {
+    justify-content: flex-start;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--ink);
+  }
+
+  .step-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  .step-tags {
+    flex: none;
+    margin-left: auto;
+    font-size: 10px;
+    letter-spacing: .04em;
+    color: var(--muted);
+  }
+
+  .step-body {
+    display: grid;
+    gap: 8px;
+    margin-top: 8px;
+  }
+
+  .step-block > b {
+    display: block;
+    font-family: var(--mono);
+    font-size: 9.5px;
+    font-weight: 500;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--gold);
+  }
+
+  .step-block pre {
+    margin: 4px 0 0;
+    padding: 8px 10px;
+    max-height: 240px;
+    overflow: auto;
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    line-height: 1.6;
+    color: var(--muted);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  .step-block pre::-webkit-scrollbar { width: 6px; }
+  .step-block pre::-webkit-scrollbar-thumb { background: #2c3128; border-radius: 4px; }
 
   /* 输入区 */
   .composer {
@@ -691,8 +832,66 @@
     return el;
   }
 
+  const ICON_COPY =
+    '<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 3.5V2.5a1 1 0 0 0-1-1h-7a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h1"/></svg>';
+  const ICON_EDIT =
+    '<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"><path d="M11 2.5l2.5 2.5-8 8H3v-2.5z"/><path d="M2.5 14h11"/></svg>';
+
+  function iconButton(label, svg, onClick) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'icon-btn';
+    btn.title = label;
+    btn.setAttribute('aria-label', label);
+    btn.innerHTML = svg;
+    btn.addEventListener('click', onClick);
+    return btn;
+  }
+
+  async function copyToClipboard(text) {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return;
+    }
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    ta.remove();
+  }
+
   function appendUser(text) {
     const wrap = simpleText('div', 'msg user', text);
+
+    const copyBtn = iconButton('复制', ICON_COPY, async () => {
+      try {
+        await copyToClipboard(text);
+        copyBtn.classList.add('copied');
+        copyBtn.title = '已复制';
+        setTimeout(() => {
+          copyBtn.classList.remove('copied');
+          copyBtn.title = '复制';
+        }, 1200);
+      } catch {
+        showError('复制失败，请手动选择文本');
+      }
+    });
+
+    const editBtn = iconButton('修改', ICON_EDIT, () => {
+      input.value = text;
+      autosize();
+      input.focus();
+    });
+
+    const actions = document.createElement('div');
+    actions.className = 'msg-actions';
+    actions.appendChild(copyBtn);
+    actions.appendChild(editBtn);
+    wrap.appendChild(actions);
+
     msgs.appendChild(wrap);
     return wrap;
   }
@@ -721,12 +920,85 @@
     citations.className = 'citations';
     wrap.appendChild(citations);
 
-    return { wrap, body, meta, citations, thinking };
+    const steps = document.createElement('div');
+    steps.className = 'steps-host';
+    wrap.appendChild(steps);
+
+    return { wrap, body, meta, citations, steps, thinking };
   }
 
   function scrollToBottom(force = false) {
     const near = msgs.scrollHeight - msgs.scrollTop - msgs.clientHeight < 140;
     if (force || near) msgs.scrollTop = msgs.scrollHeight;
+  }
+
+  function jsonBlock(label, value) {
+    const block = document.createElement('div');
+    block.className = 'step-block';
+    block.appendChild(simpleText('b', '', label));
+    const pre = document.createElement('pre');
+    pre.textContent = JSON.stringify(value ?? null, null, 2);
+    block.appendChild(pre);
+    return block;
+  }
+
+  function buildStepNode(evt, index) {
+    const data = evt.data || {};
+    const item = document.createElement('details');
+    item.className = 'step';
+
+    const head = document.createElement('summary');
+    head.appendChild(
+      simpleText('span', 'step-name', `#${evt.step ?? index + 1} ${evt.node || 'node'}`)
+    );
+
+    const tags = [];
+    if (data.model) tags.push(data.model);
+    if (data.duration_ms != null) tags.push(`${Math.round(data.duration_ms)}ms`);
+    if (data.tokens) tags.push(`${data.tokens} tok`);
+    if (tags.length) head.appendChild(simpleText('span', 'step-tags', tags.join(' · ')));
+    item.appendChild(head);
+
+    const body = document.createElement('div');
+    body.className = 'step-body';
+    body.appendChild(jsonBlock('输入', data.input ?? {}));
+    body.appendChild(jsonBlock('产出', data.output ?? {}));
+    item.appendChild(body);
+
+    return item;
+  }
+
+  // 从 /v1/runs/{id}/trace 取每一步的输入与产出，整体默认折叠。
+  async function loadSteps(host, runId) {
+    if (!runId) return;
+
+    let events = [];
+    try {
+      const res = await fetch(`/v1/runs/${encodeURIComponent(runId)}/trace`, {
+        headers: { 'X-API-Key': $('apiKey').value.trim() },
+      });
+      if (!res.ok) return;
+      ({ events = [] } = await res.json());
+    } catch {
+      return;
+    }
+
+    const steps = events.filter((e) => e.type === 'step.finished');
+    if (!steps.length) return;
+
+    const details = document.createElement('details');
+    details.className = 'steps';
+    const summary = document.createElement('summary');
+    summary.textContent = `执行步骤 · ${steps.length}`;
+    details.appendChild(summary);
+
+    const list = document.createElement('div');
+    list.className = 'step-list';
+    steps.forEach((e, i) => list.appendChild(buildStepNode(e, i)));
+    details.appendChild(list);
+
+    host.appendChild(details);
+    scrollToBottom();
   }
 
   async function readSSE(response, onEvent) {
@@ -823,6 +1095,10 @@
           $('mThread').textContent = short(threadId);
         } else if (event === 'token') {
           render(data.text || '');
+        } else if (event === 'stage') {
+          if (data.phase === 'start' && data.node) setStage(data.node, true);
+        } else if (event === 'error') {
+          throw new Error(data.message || '流式生成失败');
         } else if (event === 'done') {
           finish(data);
         }
@@ -847,14 +1123,32 @@
 
     function finish(data) {
       bubble.body.querySelector('.caret')?.remove();
+      // 流式正文是草稿；done.answer 是校验后的权威文本（可能被修正或拒答）。
+      const finalText = (data.answer || '').trim();
+      if (finalText && finalText !== text) {
+        text = finalText;
+        charCount = text.length;
+        bubble.body.textContent = finalText;
+      }
       if (!text) bubble.body.textContent = '（无内容）';
 
       const confidence = (data.confidence || 'low').toLowerCase();
       const level = confidence === 'high' ? 'high' : confidence === 'medium' ? '' : 'low';
-      bubble.meta.appendChild(simpleText('span', `badge ${level}`.trim(), 'confidence · ' + confidence));
+      bubble.meta.appendChild(simpleText('span', `badge ${level}`.trim(), '置信度 · ' + confidence));
 
       const cites = data.citations || [];
-      bubble.meta.appendChild(simpleText('span', 'badge', `citations · ${cites.length}`));
+      bubble.meta.appendChild(simpleText('span', 'badge', `引用 · ${cites.length}`));
+
+      const m = data.metrics;
+      if (m) {
+        const secs = (Number(m.elapsed_ms || 0) / 1000).toFixed(2);
+        const pct = Number(m.token_percent || 0).toFixed(1);
+        const hit = Number(m.cache_hit_rate || 0).toFixed(1);
+        bubble.meta.appendChild(simpleText('span', 'badge', `耗时 · ${secs}s`));
+        bubble.meta.appendChild(simpleText('span', 'badge', `tokens · ${m.tokens_total}/${m.token_budget}（${pct}%）`));
+        bubble.meta.appendChild(simpleText('span', 'badge', `in ${m.tokens_in} · out ${m.tokens_out}`));
+        bubble.meta.appendChild(simpleText('span', 'badge', `缓存命中 · ${hit}%`));
+      }
 
       cites.forEach((c) => {
         const card = document.createElement('div');
@@ -863,6 +1157,8 @@
         card.appendChild(document.createTextNode((c.quote || '（无引文）').trim()));
         bubble.citations.appendChild(card);
       });
+
+      loadSteps(bubble.steps, data.run_id);
     }
   }
 

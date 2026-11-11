@@ -1,9 +1,33 @@
+import hashlib
 import json
+import math
 import re
 
+from zcaisagent.domain.text import tokenize
 from zcaisagent.ports.llm import LLMDelta, LLMRequest, LLMResponse
 
 _EVIDENCE = re.compile(r'<evidence id="([^"]+)"[^>]*>(.*?)</evidence>', re.S)
+
+_FAKE_DIM = 256
+
+
+def hash_embedding(text: str, dim: int = _FAKE_DIM) -> list[float]:
+    """确定性伪向量：token 哈希映射到固定维度叠加，共同 token 贡献同方向，
+    余弦近似 token 重叠度；供测试与离线管道验证使用。"""
+    vector = [0.0] * dim
+    for token in tokenize(text):
+        digest = hashlib.md5(token.encode("utf-8")).digest()
+        position = int.from_bytes(digest[:4], "big") % dim
+        vector[position] += digest[4] / 255.0 + 0.1
+    norm = math.sqrt(sum(value * value for value in vector))
+    return [value / norm for value in vector] if norm else vector
+
+
+class FakeEmbedding:
+    """Deterministic hash-based embedding used for local dev and tests."""
+
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        return [hash_embedding(text) for text in texts]
 
 
 def _first_sentence(text: str) -> str:
@@ -42,4 +66,6 @@ class FakeLLM:
 
     async def stream(self, req: LLMRequest):
         response = await self.complete(req)
-        yield LLMDelta(text=response.text)
+        for index in range(0, len(response.text), 24):
+            yield LLMDelta(text=response.text[index : index + 24])
+        yield LLMDelta(text="", final=response)

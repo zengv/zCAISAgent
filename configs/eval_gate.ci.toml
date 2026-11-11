@@ -1,0 +1,8 @@
+# FakeLLM 冒烟基线（data/eval/baselines/fake-100.json：
+# correct 0.38 / citation 1.0 / faithfulness 1.0 / recall 1.0 / abstain 0.99）。
+correct_rate = 0.35
+citation_support = 0.90
+faithfulness = 0.90
+context_recall = 0.90
+abstain_accuracy = 0.95
+allow_failed = 0

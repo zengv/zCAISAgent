@@ -40,6 +40,8 @@ class Evidence(BaseModel):
     version: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
     citation: Citation | None = None
+    # 父子块：子块命中后可回填所属父块正文。
+    parent_content: str | None = None
 
 
 class Claim(BaseModel):
@@ -82,6 +84,9 @@ class Budget(BaseModel):
     used_steps: int = 0
     used_llm_calls: int = 0
     used_tokens: int = 0
+    used_tokens_in: int = 0
+    used_tokens_out: int = 0
+    used_cached_tokens: int = 0
     used_cost_usd: float = 0.0
     deadline_ts: float = 0.0
 
@@ -117,6 +122,7 @@ class RunState(BaseModel):
     user_id: str
     goal: str
     created_ts: float = 0.0
+    finished_ts: float = 0.0
     level: AutonomyLevel = AutonomyLevel.L1_FAST
     requested_level: AutonomyLevel | None = None
     mandate: Mandate | None = None
@@ -157,3 +163,6 @@ class Chunk(BaseModel):
     uri: str | None = None
     published_at: datetime | None = None
     version: str | None = None
+    # 父子块：父块不单独入库，子块携带父文与父 id，检索时按需扩展。
+    parent_content: str | None = None
+    parent_id: str | None = None

@@ -9,6 +9,8 @@ services:
       ZCAISAGENT_SEED_DIR: /app/data/seed
       ZCAISAGENT_DATA_DIR: /app/.zcaisagent
       ZCAISAGENT_API_KEY: dev-key
+      ZCAISAGENT_DATABASE_ENABLED: "true"
+      ZCAISAGENT_DATABASE_URL: postgresql://zcaisagent:zcaisagent@postgres:5432/zcaisagent
     volumes:
       - zcaisagent_data:/app/.zcaisagent
     depends_on:

@@ -27,7 +27,8 @@ async def _thread_history(
     return history[-_HISTORY_WINDOW:]
 
 
-async def execute_run(auth: AuthContext, request: RunRequest) -> RunState:
+async def build_run_state(auth: AuthContext, request: RunRequest) -> RunState:
+    """认证后的运行态构建：校验 goal 并装配多轮上下文。"""
     goal = request.goal.strip()
     if not goal:
         raise ValueError("goal must not be empty")
@@ -46,7 +47,7 @@ async def execute_run(auth: AuthContext, request: RunRequest) -> RunState:
         if request.thread_id
         else []
     )
-    state = create_state(
+    return create_state(
         container,
         goal=goal,
         thread_id=request.thread_id,
@@ -56,6 +57,11 @@ async def execute_run(auth: AuthContext, request: RunRequest) -> RunState:
         auth=auth,
         history=history,
     )
+
+
+async def execute_run(auth: AuthContext, request: RunRequest) -> RunState:
+    container = get_container()
+    state = await build_run_state(auth, request)
     ctx = build_context(container, auth)
     runtime = Runtime()
     result = await runtime.execute(build_default_graph(), state, ctx)

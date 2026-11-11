@@ -5,6 +5,7 @@
 > 读者：产品、研发、测试、安全、知识运营
 > 事实来源：[01-research-cais.md](01-research-cais.md)、[02-product.md](02-product.md)、[03-architecture.md](03-architecture.md)、[04-engineering-plan.md](04-engineering-plan.md) 与 M0 已交付代码
 > 本文定位：**需求契约**。回答"系统在什么条件下必须表现出什么行为"；不回答"用哪个类、哪张表、哪条路由实现"。
+> 实现状态（2026-11-11）：检索相关需求（多源融合、重排、版本/ACL 过滤、检索评测、HyDE、父子块、pgvector 持久化）与流式/评估门禁已落地（226 项测试，doc NDCG@10 0.9525），逐条验收状态见 [README](../README.md) 与 [04 §4 M0 复核](04-engineering-plan.md)；工具/记忆/多模态类需求仍按里程碑排期。
 
 ---
 
@@ -343,7 +344,7 @@ stateDiagram-v2
   3. 客户端断开时停止推送并释放执行资源；已产生的状态保留。
 - **可观察结果**：首 token P95 ≤ 3.0s（MVP），≤ 2.5s（V1）。
 - **异常**：生成失败时以错误事件结束，不得发送空答案冒充成功。
-- **现状差异**：M0 是"先执行完整 Run，再把已生成的全文按固定长度切片推送"，属于伪流式；需改为生成过程中增量推送。
+- **现状差异**：已改为两阶段真流式——`synthesize` 先逐 token 推送正文、再抽取 claims，`direct_answer` 同步流式；`done.answer` 为校验后的权威文本并覆盖前端草稿；客户端断开时取消后台 Run。首 token P95 尚未专项测量。
 
 #### FR-CHAT-03 多轮上下文 `P0` `[待收敛]`
 
@@ -501,7 +502,7 @@ stateDiagram-v2
 
 **硬规则**：原始查询永远至少参与一路检索，改写结果不得替代它。
 
-- **现状差异**：M1 已实现确定性改写分级（`capabilities/retrieval/rewrite.py`）：`simple` 短问句/不安全意图只走 `none`，其余走 `none + light`；`multi_hop` 按连接词拆 `multi_1..3`；`open` 按标点拆 `decompose_1..3`；原 query 恒为首路。尚未实现 `hyde`（需 LLM 与额外预算）与"含指代"的上下文消解（依赖 FR-CHAT-03 多轮上下文）；改写质量未用专项集测量。
+- **现状差异**：M1 已实现确定性改写分级（`capabilities/retrieval/rewrite.py`）：`simple` 短问句/不安全意图只走 `none`，其余走 `none + light`；`multi_hop` 按连接词拆 `multi_1..3`；`open` 按标点拆 `decompose_1..3`；原 query 恒为首路。HyDE 已实现（`hyde_variant`：仅 `open` 复杂度、默认关闭、失败/超时跳过并计入预算）；"含指代"的上下文消解依赖 FR-CHAT-03；改写质量未用专项集测量。
 
 #### FR-RET-04 混合检索与融合 `P0` `[待收敛]`
 

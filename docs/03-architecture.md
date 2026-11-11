@@ -82,7 +82,7 @@ flowchart TB
     end
 
     subgraph CAP["能力层 capabilities/"]
-        C1["retrieval<br/>registry / hybrid / rerank / fuse"]:::c
+        C1["retrieval<br/>registry / fusion / rerank / eval<br/>sources: inmemory·bm25·vector·pageindex·graph"]:::c
         C2["tools<br/>gateway / mcp / openapi / sql / sandbox"]:::c
         C3["memory<br/>working / episodic / semantic / procedural"]:::c
         C4["generation<br/>prompt / structured output"]:::c
@@ -710,6 +710,24 @@ score = RRF( vector_rank, lexical_rank ) = Σ 1 / (k + rank_i),  k = 60
 | 上下文打包 | 父子块扩展 + token 预算裁剪 | `max_context_tokens` 可配 |
 
 **为什么检索前过滤**：后置过滤会导致"先召回越权文档再丢弃"，既浪费又可能泄漏到日志。ACL 必须进入查询条件。
+
+#### 8.4.1 当前实现状态（2026-11-11 M1 收口复核）
+
+本节设计面向生产规模（pgvector + Postgres FTS + cross-encoder）；当前实现为零
+外部依赖的轻量等价物，接口契约一致，存储可按本节设计平滑升级：
+
+| 设计组件 | 当前实现 | 差异说明 |
+|---|---|---|
+| 向量检索（pgvector HNSW） | `sources/vector.py`：OpenAI 兼容 `/embeddings` + 内存余弦，懒构建；`sources/pgvector.py`：pgvector HNSW 持久化检索 | 默认内存；启用 `[database]` 后走 PG，连接失败自动回退内存 |
+| 关键词检索（Postgres FTS/OpenSearch） | `sources/bm25.py`：SQLite FTS5，中文单字+二元组展开 | 单机内存索引 |
+| 融合（RRF） | `fusion.py rrf_fuse`：支持 `weights` 源权重（主源 1.0，结构化补充源 0.5） | 多源并发 + 内容去重合并 |
+| 重排（cross-encoder） | `rerank.py`：优先专用端点（`style="dashscope"` 原生 / `"cohere"` 兼容），`FallbackReranker` 自动回退 embedding 余弦 → LLM 打分 | 评测 NDCG@10 0.9525（golden 100 案例） |
+| 查询改写（HyDE） | `rewrite.py hyde_variant`：`open` 复杂度生成假设性答案参与召回，失败/超时跳过 | 默认关闭（`hyde_enabled`），需额外 LLM 预算 |
+| 上下文打包（父子块） | `ingestion/chunker.py` 子块携带父文 + `context_pack.py` 按 `max_context_tokens` 裁剪 | 默认关闭（`parent_child_enabled`），开启后需重跑检索评测 |
+| 检索源扩展 | `SourceRegistry` priority + enabled 开关；额外源：`pageindex`（章节树导航）、`graph`（实体关系图+补抽+磁盘缓存）——消融显示融入常规链路为负贡献，默认停用 | — |
+| 评测与门禁 | `evaluation/retrieval.py` + `retrieval-eval` CLI：Recall@5/@10、MRR、NDCG@10，doc/answer 双口径；`evaluation/gate.py` + `eval-gate` CLI + CI workflow | 当前最优 doc R@10=0.9971 |
+
+过滤与版本控制已在各源内实现（tenant + ACL + 版本过滤先于打分），与"检索前过滤"原则一致。
 
 ### 8.5 证据评分（四维）
 

@@ -5,7 +5,9 @@ from zcaisagent.orchestration.runtime import RunContext
 
 
 async def grade_node(state: RunState, ctx: RunContext) -> StatePatch:
-    grades = grade_evidence(state.goal, state.evidence)
+    # retrieve 节点的 rerank 分存在时优先作为相关性；否则走词法相关性逻辑。
+    rerank_scores = state.analysis.get("rerank_scores") or None
+    grades = grade_evidence(state.goal, state.evidence, rerank_scores=rerank_scores)
     sufficiency = judge_sufficiency(state.goal, state.evidence, grades)
     by_id = {grade.evidence_id: grade for grade in grades}
     updated = [

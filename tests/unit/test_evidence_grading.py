@@ -102,3 +102,19 @@ def test_sufficiency_accepts_matched_topic_even_with_filler_words() -> None:
     sufficiency = judge_sufficiency(question, [item], grades)
     assert sufficiency.decision == "sufficient"
 
+
+def test_short_question_is_not_diluted_by_question_filler_words() -> None:
+    # "有什么规定"等疑问虚词不应占用相关性分母，否则命中主题的证据会卡在门槛下。
+    question = "调休有什么规定？"
+    item = _evidence(
+        "attendance_overtime#1",
+        "加班可申请调休。调休需在加班发生后 6 个月内使用，逾期作废，不予展期。",
+        relevance=0.2308,
+        authority="secondary",
+    )
+    grades = grade_evidence(question, [item])
+    assert grades[0].relevance > 0.2308
+    sufficiency = judge_sufficiency(question, [item], grades)
+    assert sufficiency.decision == "sufficient"
+
+

@@ -1,0 +1,7 @@
+﻿sources: ['bm25', 'graph', 'inmemory', 'pageindex', 'vector'] reranker: FallbackReranker
+lex2-plain             doc R@5=0.8195 R@10=0.939 ndcg=0.8843 | ans ndcg=0.9548
+lex2+vector-plain      doc R@5=0.8395 R@10=0.98 ndcg=0.9215 | ans ndcg=0.9636
+vector_only-plain      doc R@5=0.9171 R@10=0.9876 ndcg=0.9423 | ans ndcg=0.9521
+lex2-rerank            doc R@5=0.879 R@10=0.9543 ndcg=0.9238 | ans ndcg=0.9605
+lex2+vector-rerank     doc R@5=0.91 R@10=0.9971 ndcg=0.9525 | ans ndcg=0.9605
+vector_only-rerank     doc R@5=0.9033 R@10=0.9876 ndcg=0.9484 | ans ndcg=0.9608

@@ -1,7 +1,7 @@
 import asyncio
 
-from zcaisagent.capabilities.retrieval.fusion import rrf_fuse
-from zcaisagent.capabilities.retrieval.rewrite import rewrite_queries
+from zcaisagent.capabilities.retrieval.fusion import rrf_fuse, source_weight
+from zcaisagent.capabilities.retrieval.rewrite import hyde_variant, rewrite_queries
 from zcaisagent.capabilities.skills.registry import allowed_sources
 from zcaisagent.domain.models import Evidence, RunState
 from zcaisagent.domain.patch import StatePatch
@@ -13,6 +13,8 @@ async def retrieve_node(state: RunState, ctx: RunContext) -> StatePatch:
     top_k = int(getattr(ctx.config, "top_k", 5))
     # 修复阶段的补检索使用改写后的 query，原始问题保留在 state.goal。
     retry_query = state.analysis.get("retry_query")
+    budget = state.budget
+    notes: list[str] = []
     if retry_query:
         variants = [{"strategy": "retry", "query": retry_query}]
     else:
@@ -23,6 +25,36 @@ async def retrieve_node(state: RunState, ctx: RunContext) -> StatePatch:
             state.analysis.get("complexity", "simple"),
             state.analysis.get("intent", "查事实"),
         )
+        # HyDE 只用于开放问题；假设性答案参与召回与 RRF，原 query 仍排第一。
+        if (
+            getattr(ctx.config, "hyde_enabled", False)
+            and state.analysis.get("complexity") in {"open"}
+        ):
+            response = await hyde_variant(
+                ctx.llm,
+                base,
+                timeout_s=ctx.node_timeout_s,
+                max_tokens=int(getattr(ctx.config, "hyde_max_tokens", 256)),
+            )
+            if response is not None:
+                variants.append({"strategy": "hyde", "query": response.text.strip()})
+                budget = budget.model_copy(
+                    update={
+                        "used_llm_calls": budget.used_llm_calls + 1,
+                        "used_tokens": (
+                            budget.used_tokens + response.tokens_in + response.tokens_out
+                        ),
+                        "used_tokens_in": budget.used_tokens_in + response.tokens_in,
+                        "used_tokens_out": budget.used_tokens_out + response.tokens_out,
+                        "used_cached_tokens": (
+                            budget.used_cached_tokens + response.cached_tokens
+                        ),
+                        "used_cost_usd": budget.used_cost_usd + response.cost_usd,
+                    }
+                )
+                notes.append("hyde:applied")
+            else:
+                notes.append("hyde:unavailable")
 
     retrievers = ctx.sources.list() if ctx.sources is not None else [ctx.retriever]
     whitelist = allowed_sources(state)
@@ -47,7 +79,6 @@ async def retrieve_node(state: RunState, ctx: RunContext) -> StatePatch:
     )
 
     ranked_lists: list[list[Evidence]] = []
-    notes: list[str] = []
     degraded: set[str] = set()
     for (variant, retriever), result in zip(calls, results):
         strategy = variant["strategy"]
@@ -66,7 +97,30 @@ async def retrieve_node(state: RunState, ctx: RunContext) -> StatePatch:
         if variant["strategy"] not in {"none", "retry"}:
             notes.append(f"rewrite:{variant['strategy']}")
 
-    fused = rrf_fuse(ranked_lists)
+    fused = rrf_fuse(
+        ranked_lists,
+        weights=[source_weight(retriever.source_name) for _, retriever in calls],
+    )
+
+    # 融合后 LLM 相关性重排：rerank 分写入 evidence.relevance 与
+    # analysis.rerank_scores，grade 节点用它替代词法相关性；失败则回退。
+    reranker = getattr(ctx, "reranker", None)
+    rerank_scores: dict[str, float] | None = None
+    if reranker is not None and fused:
+        rerank_query = retry_query or state.analysis.get("followup_query") or state.goal
+        try:
+            scores = await reranker.rerank(rerank_query, [item.content for item in fused])
+            rerank_scores = {
+                item.id: round(score, 4) for item, score in zip(fused, scores)
+            }
+            fused = [
+                item.model_copy(update={"relevance": round(score, 4)})
+                for item, score in zip(fused, scores)
+            ]
+            notes.append(f"rerank:applied:{len(fused)}")
+        except Exception:  # noqa: BLE001 - rerank 不可用时回退词法相关性
+            rerank_scores = None
+            notes.append("rerank:unavailable")
 
     if ctx.guardrail is not None:
         quarantined: list[str] = []
@@ -82,4 +136,7 @@ async def retrieve_node(state: RunState, ctx: RunContext) -> StatePatch:
 
     if degraded:
         notes.append("retrieve_degraded:" + ",".join(sorted(degraded)))
-    return StatePatch(append_evidence=fused, append_notes=notes)
+    patch = StatePatch(append_evidence=fused, append_notes=notes, budget=budget)
+    if rerank_scores:
+        patch.analysis = {"rerank_scores": rerank_scores}
+    return patch

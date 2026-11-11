@@ -428,6 +428,17 @@ layers =
 > 状态：**已交付（骨架）**。67 项测试全绿；CLI、HTTP/SSE、trace/checkpoint 可运行；M0 检索使用内存实现，pgvector 适配器接口仅预留、**适配器未实现**；已吸收 dsh 的 SourceRegistry / Mandate / TicketStage / HealthBoard 四项机制；Docker Compose 文件已提供，未在本机验证。
 >
 > **2026-11-08 复核差异**：M0-5 的 `adapters/store/pgvector.py` 不存在；M0-8 的 `observability/tracing.py` 未建（仅 JSONL trace）；M0-11 仅 30 条（DoD 的 ≥30 达标）；SSE 为"跑完后切片"的伪流式；黄金集与评估的"分层指标"在 M1 补齐。
+>
+> **2026-11-11 M1 收口复核（检索链路 + 运行时）**：Agentic RAG 检索链路升级已落地，**226 项测试全绿**。
+> ① BM25 源（SQLite FTS5）+ RRF 融合（支持源权重）；② vector 语义源（OpenAI 兼容 `/embeddings`）+
+> 专用 cross-encoder rerank（DashScope 原生格式，`FallbackReranker` 自动回退 embedding 余弦 → LLM 打分）；
+> ③ PageIndex 章节树源 + GraphRAG 实体图源（含失败补抽与磁盘缓存；消融显示融入常规链路为负贡献，默认
+> `enabled=False` 仅保留单源评测）；④ 离线评测体系 `retrieval-eval` CLI（Recall@5/@10、MRR、NDCG@10，
+> doc/answer 双口径，golden 100 案例）。当前最优 **doc R@10=0.9971 / NDCG@10=0.9525**，M0-11 黄金集已达
+> 100 条（M1 部分指标提前达标）。
+> 2026-11-11 收口补齐：两阶段真流式（SSE 逐 token + claims 抽取，`done.answer` 覆盖草稿）、
+> HyDE 与父子块（默认关闭）、pgvector/Postgres 持久化（默认关闭，连接失败回退内存）、
+> `eval-gate` 本地门禁与 `.github/workflows/ci.yml`（见 03 §8.4.1 实现状态对照表）。
 
 | # | 任务 | 产出 | 验证 |
 |---|---|---|---|
@@ -450,8 +461,8 @@ layers =
 | # | 任务 | 产出 | 验证 |
 |---|---|---|---|
 | 1 | `analyze` + `route` + 配置化分级 | L0-L2 可路由 | 分级准确率 ≥ 85%（50 条标注） |
-| 2 | 改写策略分级（none/light/multi/hyde） | 原 query 永远保留 | 简单查询不被改坏（专项集）；2026-11-08：`capabilities/retrieval/rewrite.py` 已实现 none/light/multi/decompose 确定性分级，hyde 未做 |
-| 3 | 混合检索 + RRF + 重排 + 去重 | Recall@10 ≥ 0.85 | 检索评估脚本；无 pgvector/embedding 时先做多路关键词 + RRF。2026-11-08：`fusion.py`（RRF k=60）已接入 `retrieve`，按"改写变体 × 源"并行融合；重排与向量路未做 |
+| 2 | 改写策略分级（none/light/multi/hyde） | 原 query 永远保留 | 简单查询不被改坏（专项集）；2026-11-11：`capabilities/retrieval/rewrite.py` 已实现 none/light/multi/decompose 确定性分级 + HyDE（默认关闭，仅 `open` 复杂度） |
+| 3 | 混合检索 + RRF + 重排 + 去重 | Recall@10 ≥ 0.85 | 检索评估脚本；无 pgvector/embedding 时先做多路关键词 + RRF。2026-11-11：`fusion.py`（RRF k=60）+ 专用 rerank + vector/pgvector 向量路均已接入，doc R@10=0.9971 |
 | 4 | 证据评分 + 充分性判断 | 四维评分 + coverage | 与人工一致性 ≥ 0.8 |
 | 5 | 证据约束生成 + claim 拆解 + 引用绑定 | 答案卡片数据 | Citation Support ≥ 0.85 |
 | 6 | claim 级校验 + 修复 + 拒答 | Verdict + repair | 无依据断言率 < 5% |
@@ -486,7 +497,7 @@ layers =
 | # | 任务 | 产出 | 验证 |
 |---|---|---|---|
 | 1 | Studio 最小四页（数据源/轨迹/评估/配置） | 运营可自助 | 走查通过 |
-| 2 | 回归门禁接入 CI | 劣化阻断 | 故意降级被拦 |
+| 2 | 回归门禁接入 CI | 劣化阻断 | 故意降级被拦；2026-11-11：`eval-gate` CLI 与 `.github/workflows/ci.yml` 已接入 |
 | 3 | 成本/延迟/质量看板 | 可观测 | 数据准确 |
 | 4 | 压测与容量规划 | 20/50 并发 | P95 达标 |
 | 5 | 故障演练（模型/检索/DB/Redis） | 降级生效 | 演练报告 |

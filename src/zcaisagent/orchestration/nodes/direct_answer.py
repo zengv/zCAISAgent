@@ -2,7 +2,7 @@ from zcaisagent.domain.enums import RunStatus
 from zcaisagent.domain.models import Answer, Message, RunState
 from zcaisagent.domain.patch import StatePatch
 from zcaisagent.orchestration.runtime import RunContext
-from zcaisagent.ports.llm import LLMRequest
+from zcaisagent.ports.llm import LLMRequest, LLMResponse
 
 
 async def direct_answer_node(state: RunState, ctx: RunContext) -> StatePatch:
@@ -13,11 +13,26 @@ async def direct_answer_node(state: RunState, ctx: RunContext) -> StatePatch:
         ],
         purpose="direct_answer",
     )
-    response = await ctx.llm.complete(request)
+    if getattr(ctx, "emit", None) is not None:
+        pieces: list[str] = []
+        final: LLMResponse | None = None
+        async for delta in ctx.llm.stream(request):
+            if delta.text:
+                pieces.append(delta.text)
+                await ctx.emit("token", {"text": delta.text})
+            if delta.final is not None:
+                final = delta.final
+        text = "".join(pieces).strip()
+        response = final.model_copy(update={"text": text}) if final else LLMResponse(text=text)
+    else:
+        response = await ctx.llm.complete(request)
     budget = state.budget.model_copy(
         update={
             "used_llm_calls": state.budget.used_llm_calls + 1,
             "used_tokens": state.budget.used_tokens + response.tokens_in + response.tokens_out,
+            "used_tokens_in": state.budget.used_tokens_in + response.tokens_in,
+            "used_tokens_out": state.budget.used_tokens_out + response.tokens_out,
+            "used_cached_tokens": state.budget.used_cached_tokens + response.cached_tokens,
             "used_cost_usd": state.budget.used_cost_usd + response.cost_usd,
         }
     )

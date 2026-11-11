@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import re
 
+from zcaisagent.domain.models import Message
+from zcaisagent.ports.llm import LLMRequest, LLMPort, LLMResponse
+
 _QUESTION_WORDS = (
     "请问",
     "是什么",
@@ -17,6 +20,29 @@ _QUESTION_WORDS = (
     "?",
 )
 _SPLIT = re.compile(r"[和及与、；;]|以及")
+
+_HYDE_SYSTEM = "你是检索助手。针对问题写一段假设性回答，不需要准确，只用于检索匹配。"
+
+
+async def hyde_variant(
+    llm: LLMPort, goal: str, timeout_s: float = 30.0, max_tokens: int = 256
+) -> LLMResponse | None:
+    """生成 HyDE 假设性答案；失败、超时或空串返回 None。"""
+    try:
+        response = await llm.complete(
+            LLMRequest(
+                messages=[
+                    Message(role="system", content=_HYDE_SYSTEM),
+                    Message(role="user", content=f"用 120 字以内回答：{goal}"),
+                ],
+                purpose="hyde",
+                max_tokens=max_tokens,
+                timeout_s=timeout_s,
+            )
+        )
+    except Exception:  # noqa: BLE001 - 检索增强失败不中断主链路
+        return None
+    return response if response.text.strip() else None
 
 
 def _light(query: str) -> str:

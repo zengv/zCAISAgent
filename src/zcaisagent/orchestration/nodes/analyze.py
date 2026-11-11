@@ -208,6 +208,9 @@ async def _model_analysis(state: RunState, ctx: RunContext) -> tuple[dict | None
         update={
             "used_llm_calls": state.budget.used_llm_calls + 1,
             "used_tokens": state.budget.used_tokens + response.tokens_in + response.tokens_out,
+            "used_tokens_in": state.budget.used_tokens_in + response.tokens_in,
+            "used_tokens_out": state.budget.used_tokens_out + response.tokens_out,
+            "used_cached_tokens": state.budget.used_cached_tokens + response.cached_tokens,
             "used_cost_usd": state.budget.used_cost_usd + response.cost_usd,
         }
     )

@@ -32,17 +32,41 @@ _NON_TOPIC_BIGRAMS = frozenset(
 )
 
 
+_NON_TOPIC_CHARS = frozenset(char for bigram in _NON_TOPIC_BIGRAMS for char in bigram)
+
+
 def _topic_bigrams(text: str) -> set[str]:
     chars = [ch for ch in text.lower() if "\u4e00" <= ch <= "\u9fff"]
     return {chars[index] + chars[index + 1] for index in range(len(chars) - 1)}
 
 
+def _topic_bigrams_of_question(question: str) -> set[str]:
+    # 二元切分会在虚词两侧切出"休有""有什"这类噪声片段，它们不含主题，
+    # 若计入分母会把短问句的相关性稀释到门槛以下，这里一并剔除。
+    return {
+        bigram
+        for bigram in _topic_bigrams(question)
+        if bigram not in _NON_TOPIC_BIGRAMS and not (set(bigram) & _NON_TOPIC_CHARS)
+    }
+
+
+def _topic_coverage(question: str, text: str) -> float:
+    """问题实义主题在证据中的覆盖率。
+
+    疑问虚词与通用业务词不承载主题，若计入分母会把"调休有什么规定"这类
+    短问句的相关性稀释到门槛以下；这里只用实义主题二元组衡量覆盖。
+    """
+    topic = _topic_bigrams_of_question(question)
+    if not topic:
+        return 0.0
+    return len(topic & _topic_bigrams(text)) / len(topic)
+
+
 def _covers_topic(question: str, text: str) -> bool:
     """证据是否覆盖问题主题：至少一个非通用二元组在证据中完整出现。"""
-    topic = _topic_bigrams(question) - _NON_TOPIC_BIGRAMS
-    if not topic:
+    if not _topic_bigrams_of_question(question):
         return overlap_ratio(question, text) >= _QUALIFY_OVERLAP
-    return bool(topic & _topic_bigrams(text))
+    return _topic_coverage(question, text) > 0
 
 
 def _jaccard(left: str, right: str) -> float:
@@ -78,7 +102,10 @@ def _conflict_ids(evidence: list[Evidence], similarity: dict[tuple[str, str], fl
 
 
 def grade_evidence(
-    question: str, evidence: list[Evidence], now: datetime | None = None
+    question: str,
+    evidence: list[Evidence],
+    now: datetime | None = None,
+    rerank_scores: dict[str, float] | None = None,
 ) -> list[EvidenceGrade]:
     now = now or datetime.now(timezone.utc)
     similarity = {
@@ -89,7 +116,16 @@ def grade_evidence(
     conflicted = _conflict_ids(evidence, similarity)
     grades: list[EvidenceGrade] = []
     for item in evidence:
-        relevance = max(item.relevance, overlap_ratio(question, f"{item.title or ''} {item.content}"))
+        haystack = f"{item.title or ''} {item.content}"
+        if rerank_scores is not None and item.id in rerank_scores:
+            # rerank 分直接作为相关性，不与词面重叠取 max，保证语义重排生效。
+            relevance = max(0.0, min(1.0, float(rerank_scores[item.id])))
+        else:
+            relevance = max(
+                item.relevance,
+                overlap_ratio(question, haystack),
+                _topic_coverage(question, haystack),
+            )
         authority = _AUTHORITY.get(item.authority, _AUTHORITY["unknown"])
         freshness = _freshness(item, now)
         others = [

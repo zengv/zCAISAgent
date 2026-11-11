@@ -1,0 +1,11 @@
+﻿sources: ['bm25', 'graph', 'inmemory', 'pageindex', 'vector'] reranker: EmbeddingReranker
+lex2-plain               doc R@5=0.8195 R@10=0.939 ndcg=0.8843 | ans R@10=1.0 ndcg=0.9548
+lex2+vector-plain        doc R@5=0.8395 R@10=0.98 ndcg=0.9215 | ans R@10=1.0 ndcg=0.9636
+vector_only-plain        doc R@5=0.92 R@10=0.9876 ndcg=0.9433 | ans R@10=1.0 ndcg=0.9521
+lex2+pi+graph-plain      doc R@5=0.7898 R@10=0.9224 ndcg=0.8719 | ans R@10=1.0 ndcg=0.9467
+all5-plain               doc R@5=0.811 R@10=0.9581 ndcg=0.9012 | ans R@10=1.0 ndcg=0.9496
+lex2-rerank              doc R@5=0.8436 R@10=0.9514 ndcg=0.912 | ans R@10=1.0 ndcg=0.9524
+lex2+vector-rerank       doc R@5=0.8626 R@10=0.9971 ndcg=0.9378 | ans R@10=1.0 ndcg=0.9524
+vector_only-rerank       doc R@5=0.8733 R@10=0.9876 ndcg=0.9329 | ans R@10=1.0 ndcg=0.9524
+lex2+pi+graph-rerank     doc R@5=0.8293 R@10=0.9514 ndcg=0.9048 | ans R@10=1.0 ndcg=0.9519
+all5-rerank              doc R@5=0.8626 R@10=0.9971 ndcg=0.9367 | ans R@10=1.0 ndcg=0.9524
