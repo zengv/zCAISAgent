@@ -4,8 +4,12 @@ root_package = zcaisagent
 [importlinter:contract:layered]
 name = Layered architecture
 type = layers
+# 自下而上：domain → ports（抽象）→ capabilities（能力实现）→ orchestration（编排）
+# → evaluation（离线评测组装编排层）。上层可依赖下层，同层互不依赖。
 layers =
     zcaisagent.api
-    zcaisagent.orchestration | zcaisagent.capabilities | zcaisagent.evaluation
+    zcaisagent.evaluation
+    zcaisagent.orchestration
+    zcaisagent.capabilities
     zcaisagent.ports
     zcaisagent.domain
