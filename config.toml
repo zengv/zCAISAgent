@@ -71,6 +71,8 @@ dimensions = 1024
 # —— 模型提供者定义 ——
 # key_env 是环境变量名，启动时从系统环境或 .env 里读取实际密钥；
 # base_url 必须不带尾部 `/`，适配器内部会补。
+# cost_in / cost_out 为单价（$/1M tokens），用于成本计量；0 表示未配置，
+# 回退全局 ZCAISAGENT_INPUT/OUTPUT_PRICE_PER_MTOK。以下为示例单价，请按账单修改。
 
 [model_providers.modelscope-ds-flash]
 name = "MS-Deepseek-flash"
@@ -79,6 +81,8 @@ base_url = "https://api-inference.modelscope.cn/v1"
 key_env = "AI_KEY_MS"
 context_window = 400000
 reasoning_effort = "low"
+cost_in = 0.28
+cost_out = 0.42
 
 [model_providers.modelscope-glm-flash]
 name = "GLM-5.3-Flash"
@@ -87,6 +91,8 @@ base_url = "https://api-inference.modelscope.cn/v1"
 key_env = "AI_KEY_MS"
 context_window = 400000
 reasoning_effort = "low"
+cost_in = 0.20
+cost_out = 0.60
 
 [model_providers.deepseek]
 name = "Deepseek-flash"
@@ -95,6 +101,8 @@ base_url = "https://api.deepseek.com"
 key_env = "AI_KEY_DS"
 context_window = 800000
 reasoning_effort = "high"
+cost_in = 0.28
+cost_out = 0.42
 
 [model_providers.qwen]
 name = "Qwen-3.8-flash"
@@ -103,6 +111,8 @@ base_url = "https://maas.qianwenaiapi.com/compatible-mode/v1"
 key_env = "AI_KEY_QW"
 context_window = 800000
 reasoning_effort = "high"
+cost_in = 0.25
+cost_out = 1.00
 
 [model_providers.deepseek-pro]
 name = "Deepseek-v4-Pro"
@@ -111,6 +121,8 @@ base_url = "https://api.deepseek.com"
 key_env = "AI_KEY_DS"
 context_window = 800000
 reasoning_effort = "max"
+cost_in = 0.28
+cost_out = 0.42
 
 [model_providers.qwen-max]
 name = "Qwen-3.8-Max"
@@ -119,3 +131,90 @@ base_url = "https://maas.qianwenaiapi.com/compatible-mode/v1"
 key_env = "AI_KEY_QW"
 context_window = 800000
 reasoning_effort = "max"
+cost_in = 0.60
+cost_out = 2.40
+
+# —— M2 治理配置（默认关闭 / 最小权限） ——
+# [security] 角色 → scopes 与 ACL token 映射；未声明角色默认无 scope。
+# identity 取值 api_key / oidc；OIDC 走 introspection，客户端密钥只从环境变量读取。
+[security]
+identity = "api_key"
+roles = { support = ["retrieve", "tool:read", "run:create"], admin = ["retrieve", "tool:read", "tool:write", "run:create", "run:approve", "admin:read", "admin:write"] }
+acl_tokens_by_role = { support = ["public"], admin = ["public", "finance"] }
+
+[security.oidc]
+introspection_url = ""
+client_id = ""
+client_secret_env = "ZCAISAGENT_OIDC_CLIENT_SECRET"
+timeout_s = 5.0
+
+# OPA 策略端点；url 为空时使用内置 RBAC。
+[security.opa]
+url = ""
+timeout_s = 3.0
+
+# [tools] 外部工具接入；MCP / OpenAPI / SQL 默认留空，内置工单写工具默认关闭。
+[tools]
+enable_kb_search = true
+enable_ticket = false
+mcp_servers = []
+openapi = {}
+sql = {}
+
+# [memory] 三类记忆；working 由 RunState 承担，episodic/semantic/procedural 落进程内存储。
+# ttl_s=0 表示不过期；环境变量 ZCAISAGENT_MEMORY_ENABLED /
+# ZCAISAGENT_MEMORY_DISTILL_ENABLED 可覆盖开关。
+[memory]
+enabled = true
+distill_enabled = true
+max_items = 200
+ttl_s = 0
+
+# [cache] 结果缓存；默认关闭，仅缓存非流式确定性结果。
+# enabled=true 时启用检索缓存，llm_enabled=true 时额外缓存 temperature=0 的 LLM 请求；
+# 环境变量 ZCAISAGENT_CACHE_ENABLED / ZCAISAGENT_CACHE_LLM_ENABLED 可覆盖开关。
+# backend=redis 时需要可选依赖 redis（pip install -e ".[redis]"），连接失败自动回退 memory。
+# 环境变量 ZCAISAGENT_CACHE_BACKEND / ZCAISAGENT_REDIS_URL / ZCAISAGENT_REDIS_TIMEOUT_S 可覆盖。
+[cache]
+enabled = false
+ttl_s = 300
+max_entries = 1000
+llm_enabled = true
+backend = "memory"
+redis_url = "redis://localhost:6379/0"
+redis_timeout_s = 1.0
+
+# [scheduler] 定时任务；默认关闭，调度器只产生 Run。
+[scheduler]
+enabled = false
+tick_s = 30
+
+# [events] Webhook 事件投递；默认关闭。
+# enabled=true 且 webhook_urls 非空时才装配 WebhookEventSink，否则容器保持 events=None。
+# 签名密钥只从 secret_env 指向的环境变量读取（不落盘）；5xx/429/网络异常按指数退避
+# 重试 max_retries 次，最终失败写入 dead_letter_path 指定的 JSONL。
+[events]
+enabled = false
+webhook_urls = []
+secret_env = "ZCAISAGENT_EVENT_SECRET"
+max_retries = 3
+dead_letter_path = ".zcaisagent/dead_letter.jsonl"
+
+# [secret] 密钥来源；默认从环境变量读取，Vault 为可选实现。
+# provider=vault 且 vault_addr 非空时使用 Vault KV v2（token 取自 vault_token_env），
+# 读取失败自动回退环境变量，health 的 secret 项降级。
+[secret]
+provider = "env"
+vault_addr = ""
+vault_token_env = "VAULT_TOKEN"
+vault_mount = "secret"
+vault_path = "zcaisagent"
+
+# [studio] Studio 看板数据源；eval_report_path 为 eval --out 的默认产物位置，
+# 缺失时回退 baseline_dir 下 mtime 最新的 *.json。
+# 环境变量 ZCAISAGENT_STUDIO_EVAL_REPORT / ZCAISAGENT_STUDIO_EVAL_GATE /
+# ZCAISAGENT_STUDIO_BASELINE_DIR 可覆盖对应路径。
+[studio]
+eval_report_path = "data/eval/latest.json"
+eval_gate_path = "configs/eval_gate.toml"
+baseline_dir = "data/eval/baselines"

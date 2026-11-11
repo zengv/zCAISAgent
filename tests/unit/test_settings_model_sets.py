@@ -45,6 +45,111 @@ reasoning_effort = "high"
     assert settings.resolve_effort("never-seen-purpose") == "low"
 
 
+def test_m2_sections_are_parsed(tmp_path, monkeypatch) -> None:
+    _clear_env(monkeypatch)
+    _, env = _write_config(
+        tmp_path,
+        """
+[security]
+identity = "oidc"
+roles = { support = ["retrieve", "tool:read"] }
+acl_tokens_by_role = { support = ["public"] }
+
+[security.oidc]
+introspection_url = "https://idp.test/introspect"
+client_id = "zcais"
+client_secret_env = "OIDC_SECRET"
+
+[security.opa]
+url = "https://opa.test/v1/data/zcais/allow"
+
+[tools]
+enable_kb_search = false
+enable_ticket = true
+mcp_servers = [{ name = "local", command = "python", enabled = false }]
+
+[tools.openapi.sources.api]
+enabled = false
+
+[tools.sql.sources.support]
+path = "demo.db"
+tables = ["tickets"]
+
+[memory]
+enabled = true
+distill_enabled = false
+max_items = 50
+ttl_s = 60
+
+[cache]
+enabled = true
+ttl_s = 120
+max_entries = 5
+llm_enabled = false
+
+[scheduler]
+enabled = true
+tick_s = 5
+
+[events]
+enabled = true
+webhook_urls = ["https://example.test/hook"]
+secret_env = "HOOK_SECRET"
+max_retries = 4
+dead_letter_path = "tmp/dead.jsonl"
+
+[secret]
+provider = "vault"
+vault_addr = "https://vault.test"
+vault_token_env = "VT"
+vault_mount = "kv"
+vault_path = "zcaisagent"
+""",
+        env_body="",
+    )
+    settings = Settings.from_env(env_file=env, config_file=tmp_path / "config.toml")
+
+    assert settings.security is not None
+    assert settings.security.identity_mode == "oidc"
+    assert settings.security.roles == {"support": ["retrieve", "tool:read"]}
+    assert settings.security.acl_tokens_by_role == {"support": ["public"]}
+    assert settings.security.oidc_introspection_url == "https://idp.test/introspect"
+    assert settings.security.opa_url == "https://opa.test/v1/data/zcais/allow"
+
+    assert settings.tools is not None
+    assert settings.tools.enable_kb_search is False
+    assert settings.tools.enable_ticket is True
+    assert settings.tools.mcp_servers == [
+        {"name": "local", "command": "python", "enabled": False}
+    ]
+    assert set(settings.tools.openapi["sources"]) == {"api"}
+    assert set(settings.tools.sql["sources"]) == {"support"}
+
+    assert settings.memory.max_items == 50
+    assert settings.memory.distill_enabled is False
+    assert settings.memory.ttl_s == 60.0
+
+    assert settings.cache is not None
+    assert settings.cache.enabled is True
+    assert settings.cache.llm_enabled is False
+    assert settings.cache.max_entries == 5
+
+    assert settings.scheduler is not None
+    assert settings.scheduler.enabled is True
+    assert settings.scheduler.tick_s == 5.0
+
+    assert settings.events is not None
+    assert settings.events.webhook_urls == ["https://example.test/hook"]
+    assert settings.events.secret_env == "HOOK_SECRET"
+    assert settings.events.max_retries == 4
+    assert settings.events.dead_letter_path.name == "dead.jsonl"
+
+    assert settings.secret is not None
+    assert settings.secret.provider == "vault"
+    assert settings.secret.vault_addr == "https://vault.test"
+    assert settings.secret.vault_mount == "kv"
+
+
 def test_fallback_chain_same_then_neighbor_bidirectional(tmp_path, monkeypatch) -> None:
     _clear_env(monkeypatch)
     _, env = _write_config(

@@ -18,12 +18,36 @@ class ToolSpec(BaseModel):
     max_output_chars: int = 8_000
 
 
+class ApprovalRequest(BaseModel):
+    """工具调用需要人工审批时返回的结构化请求。"""
+
+    tool: str
+    args: dict = Field(default_factory=dict)
+    risk_level: Literal["read", "write", "destructive"] = "write"
+    reason: str = ""
+    scopes: list[str] = Field(default_factory=list)
+
+
+class ToolCallDecision(BaseModel):
+    """ToolGateway 四段校验的最终决策。"""
+
+    allowed: bool = True
+    reason: str = ""
+    approval_required: bool = False
+    approval_id: str | None = None
+
+
 class ToolResult(BaseModel):
     tool: str
     ok: bool
     output: Any = None
     error: str | None = None
     latency_ms: int = 0
+    # 审批中断：ok=False 且 approval_required=True 时由 Runtime 进入 AWAITING_USER。
+    approval_required: bool = False
+    approval_id: str | None = None
+    # 输出命中注入检测时隔离，不进入 evidence。
+    quarantined: bool = False
 
 
 class ToolPort(Protocol):

@@ -41,6 +41,20 @@ class SourceRegistry:
     def names(self) -> list[str]:
         return sorted(self._sources)
 
+    def registrations(self) -> list[SourceRegistration]:
+        """全部已注册源（含 disabled），按优先级与名称排序。"""
+        return sorted(
+            self._sources.values(), key=lambda item: (item.priority, item.name)
+        )
+
+    def set_enabled(self, name: str, enabled: bool) -> bool:
+        """进程内启停源；未知源返回 False 且不改变状态。"""
+        registration = self._sources.get(name)
+        if registration is None:
+            return False
+        registration.enabled = enabled
+        return True
+
     def get(self, name: str) -> RetrieverPort | None:
         registration = self._sources.get(name)
         return registration.retriever if registration else None

@@ -3,7 +3,13 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from zcaisagent.domain.enums import AutonomyLevel, RunStatus, SourceType, Support
+from zcaisagent.domain.enums import (
+    ApprovalStatus,
+    AutonomyLevel,
+    RunStatus,
+    SourceType,
+    Support,
+)
 from zcaisagent.domain.mandate import Mandate
 
 
@@ -115,6 +121,37 @@ class Skill(BaseModel):
     min_citation_support: float | None = None
 
 
+class PendingApproval(BaseModel):
+    """待人工审批的工具调用请求；字段全给默认值以便旧状态反序列化。"""
+
+    id: str = ""
+    run_id: str = ""
+    step_id: str = ""
+    tool: str = ""
+    args: dict[str, Any] = Field(default_factory=dict)
+    risk_level: Literal["read", "write", "destructive"] = "write"
+    status: ApprovalStatus = ApprovalStatus.PENDING
+    requested_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    decided_at: datetime | None = None
+    decided_by: str | None = None
+    reason: str = ""
+    result_digest: str | None = None
+
+
+class ToolInvocation(BaseModel):
+    """一次工具调用的审计明细。"""
+
+    id: str = ""
+    tool: str = ""
+    args_hash: str = ""
+    risk_level: Literal["read", "write", "destructive"] = "read"
+    status: Literal["ok", "error", "approval_required", "rejected"] = "ok"
+    latency_ms: int = 0
+    result_digest: str | None = None
+    approval_id: str | None = None
+    error: str | None = None
+
+
 class RunState(BaseModel):
     run_id: str
     thread_id: str
@@ -139,6 +176,10 @@ class RunState(BaseModel):
     repair_round: int = 0
     status: RunStatus = RunStatus.RUNNING
     error: dict[str, Any] | None = None
+    # HITL：非 None 时 Run 停在 AWAITING_USER，恢复后从 resume_node 继续。
+    pending_approval: PendingApproval | None = None
+    resume_node: str | None = None
+    tool_invocations: list[ToolInvocation] = Field(default_factory=list)
     schema_version: int = 1
 
 

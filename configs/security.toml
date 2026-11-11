@@ -1,0 +1,27 @@
+# 安全配置示例：复制到 config.toml 的 [security] 段后按需修改。
+# 未声明的角色默认无 scope（deny by default）。
+
+[security]
+identity = "api_key"  # api_key | oidc
+
+[security.roles]
+support = ["retrieve", "tool:read", "run:create"]
+reviewer = ["retrieve", "tool:read", "run:approve"]
+admin = ["retrieve", "tool:read", "tool:write", "run:create", "run:approve", "admin:read", "admin:write"]
+
+[security.acl_tokens_by_role]
+support = ["public"]
+reviewer = ["public", "support"]
+admin = ["public", "support", "finance"]
+
+# OIDC introspection：客户端密钥只从环境变量读取，不落盘。
+[security.oidc]
+introspection_url = "https://idp.example.com/introspect"
+client_id = "zcaisagent"
+client_secret_env = "ZCAISAGENT_OIDC_CLIENT_SECRET"
+timeout_s = 5.0
+
+# OPA 策略端点；url 为空时使用内置 RBAC。端点异常时一律拒绝。
+[security.opa]
+url = ""
+timeout_s = 3.0

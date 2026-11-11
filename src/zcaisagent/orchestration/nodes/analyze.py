@@ -2,11 +2,12 @@ import json
 import re
 
 from zcaisagent.capabilities.conversation.context import resolve_followup
-from zcaisagent.domain.enums import AutonomyLevel
+from zcaisagent.domain.enums import AutonomyLevel, MemoryKind
 from zcaisagent.domain.models import Message, RunState
 from zcaisagent.domain.patch import StatePatch
 from zcaisagent.orchestration.runtime import RunContext
 from zcaisagent.ports.llm import LLMRequest
+from zcaisagent.ports.memory import MemoryQuery
 
 _GREETINGS = ("你好", "您好", "hi", "hello", "谢谢", "thanks", "早上好")
 _UNSAFE_MARKERS = (
@@ -266,6 +267,30 @@ async def analyze_node(state: RunState, ctx: RunContext) -> StatePatch:
         else:
             analysis["skill"] = {"matched": False, "reason": decision.reason}
         notes.append(f"skill:{decision.skill.name if decision.skill else 'none'}:{decision.reason}")
+
+    # 只读召回 semantic 偏好；记忆异常不影响分析结果。
+    memory = getattr(ctx, "memory", None)
+    memory_config = getattr(getattr(ctx, "config", None), "memory", None)
+    if memory is not None and getattr(memory_config, "enabled", False):
+        try:
+            recalled = await memory.read(
+                MemoryQuery(
+                    tenant_id=state.tenant_id,
+                    user_id=state.user_id,
+                    text=state.goal,
+                    kinds=[MemoryKind.SEMANTIC.value],
+                    limit=5,
+                ),
+                ctx.auth,
+            )
+            analysis["memory"] = {
+                "preferences": [item.content for item in recalled],
+                "count": len(recalled),
+            }
+            notes.append(f"memory:recalled:{len(recalled)}")
+        except Exception:  # noqa: BLE001 - 记忆读取失败不阻断分析
+            analysis["memory"] = {"preferences": [], "count": 0}
+            notes.append("memory:error")
 
     patch.level = level
     patch.analysis = analysis

@@ -1,4 +1,6 @@
 import asyncio
+import hashlib
+import json
 
 from zcaisagent.capabilities.retrieval.fusion import rrf_fuse, source_weight
 from zcaisagent.capabilities.retrieval.rewrite import hyde_variant, rewrite_queries
@@ -6,7 +8,23 @@ from zcaisagent.capabilities.skills.registry import allowed_sources
 from zcaisagent.domain.models import Evidence, RunState
 from zcaisagent.domain.patch import StatePatch
 from zcaisagent.orchestration.runtime import RunContext
-from zcaisagent.ports.retrieval import RetrieveRequest
+from zcaisagent.ports.retrieval import RetrieveRequest, RetrieveResult
+from zcaisagent.ports.security import AuditEvent
+
+
+def _cache_key(
+    state: RunState, ctx: RunContext, source_name: str, top_k: int, query: str
+) -> str:
+    """检索缓存键：租户 + ACL 摘要 + 源 + top_k + 索引版本 + 归一化 query。"""
+    acl_digest = hashlib.sha256(
+        json.dumps(sorted(ctx.auth.acl_tokens), ensure_ascii=False).encode("utf-8")
+    ).hexdigest()
+    normalized = " ".join(query.lower().split())
+    index_version = ctx.extra.get("index_version", "")
+    return (
+        f"retrieval:{state.tenant_id}:{acl_digest}:{source_name}:"
+        f"{top_k}:{index_version}:{normalized}"
+    )
 
 
 async def retrieve_node(state: RunState, ctx: RunContext) -> StatePatch:
@@ -68,9 +86,53 @@ async def retrieve_node(state: RunState, ctx: RunContext) -> StatePatch:
             tenant_id=state.tenant_id,
             acl_tokens=ctx.auth.acl_tokens,
         )
-        return await asyncio.wait_for(
+        cache = ctx.cache
+        cache_key = (
+            _cache_key(state, ctx, retriever.source_name, top_k, query)
+            if cache is not None
+            else None
+        )
+        if cache is not None and cache_key is not None:
+            try:
+                cached = await cache.get(cache_key)
+            except Exception:  # noqa: BLE001 - 缓存故障不阻断检索
+                cached = None
+                notes.append("retrieve_cache:error")
+            if cached is not None:
+                try:
+                    result = RetrieveResult(
+                        source_name=str(cached["source_name"]),
+                        evidence=[
+                            Evidence.model_validate(item)
+                            for item in cached["evidence"]
+                        ],
+                        latency_ms=0,
+                    )
+                except Exception:  # noqa: BLE001 - 缓存内容损坏时回落真实检索
+                    notes.append("retrieve_cache:error")
+                else:
+                    notes.append(f"retrieve_cache:hit:{retriever.source_name}")
+                    return result
+
+        result = await asyncio.wait_for(
             retriever.retrieve(request, ctx.auth), timeout=ctx.node_timeout_s
         )
+        # 只缓存成功结果；降级结果下一次仍走真实检索。
+        if cache is not None and cache_key is not None and not result.degraded:
+            try:
+                await cache.set(
+                    cache_key,
+                    {
+                        "source_name": result.source_name,
+                        "evidence": [
+                            item.model_dump(mode="json") for item in result.evidence
+                        ],
+                        "latency_ms": result.latency_ms,
+                    },
+                )
+            except Exception:  # noqa: BLE001 - 缓存故障不阻断检索
+                notes.append("retrieve_cache:error")
+        return result
 
     calls = [(variant, retriever) for variant in variants for retriever in retrievers]
     results = await asyncio.gather(
@@ -123,16 +185,37 @@ async def retrieve_node(state: RunState, ctx: RunContext) -> StatePatch:
             notes.append("rerank:unavailable")
 
     if ctx.guardrail is not None:
-        quarantined: list[str] = []
+        quarantined: list[tuple[Evidence, str | None, str | None]] = []
         for evidence in fused:
             decision = await ctx.guardrail.check_evidence(evidence, ctx.auth)
             if decision.allowed:
                 continue
-            quarantined.append(evidence.id)
+            quarantined.append(
+                (evidence, decision.category, decision.details.get("marker"))
+            )
         if quarantined:
-            rejected = set(quarantined)
+            rejected = {evidence.id for evidence, _, _ in quarantined}
             fused = [evidence for evidence in fused if evidence.id not in rejected]
             notes.append("evidence_quarantined:" + ",".join(sorted(rejected)))
+            if ctx.audit is not None:
+                for evidence, category, marker in quarantined:
+                    try:
+                        await ctx.audit.append(
+                            AuditEvent(
+                                action="guardrail.evidence_quarantined",
+                                actor=ctx.auth.user_id,
+                                tenant_id=ctx.auth.tenant_id,
+                                run_id=state.run_id,
+                                detail={
+                                    "evidence_id": evidence.id,
+                                    "source_name": evidence.source_name,
+                                    "category": category,
+                                    "marker": marker,
+                                },
+                            )
+                        )
+                    except Exception:  # noqa: BLE001 - 审计失败不阻断 Run
+                        pass
 
     if degraded:
         notes.append("retrieve_degraded:" + ",".join(sorted(degraded)))

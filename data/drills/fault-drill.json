@@ -1,0 +1,47 @@
+{
+  "generated_at": "2026-11-11T05:47:40+00:00",
+  "passed": true,
+  "scenarios": [
+    {
+      "name": "model_failure",
+      "passed": true,
+      "trigger": "主 provider 返回 500 / 全部 provider 500 / LLM 直接抛异常",
+      "degraded_path": "OpenAICompatLLM fallback 链 p1→p2；全部失败抛 httpx.HTTPError；Runtime NODE_FAILED → FAILED",
+      "detail": "p1 500 → p2 200 (model=backup-model); 全部失败 → HTTPStatusError; 异常 LLM run=failed steps=8",
+      "health": {
+        "runtime": "down"
+      }
+    },
+    {
+      "name": "retrieval_failure",
+      "passed": true,
+      "trigger": "FailingRetriever 抛 TimeoutError，InMemoryRetriever 正常",
+      "degraded_path": "retrieve_node 记录 retrieve_error/retrieve_degraded，保留其余源证据",
+      "detail": "failing 源超时；保留 inmemory 证据 1 条，notes 含 degraded",
+      "health": {
+        "inmemory": "ok",
+        "failing": "down"
+      }
+    },
+    {
+      "name": "pg_unavailable",
+      "passed": true,
+      "trigger": "Postgres DSN 指向不可达的 127.0.0.1:1",
+      "degraded_path": "build_container 回退内存检索 + 种子语料，health.database=down",
+      "detail": "PG 不可达 → 回退内存；seed_chunks=14; health.database=down",
+      "health": {
+        "database": "down"
+      }
+    },
+    {
+      "name": "redis_unavailable",
+      "passed": true,
+      "trigger": "Redis URL 指向不可达的 127.0.0.1:1",
+      "degraded_path": "build_cache 返回 RedisCache + InMemoryCache 回退，is_degraded=True",
+      "detail": "Redis 不可达 → 回退 InMemoryCache；get/set 不抛异常，is_degraded=True",
+      "health": {
+        "cache": "down"
+      }
+    }
+  ]
+}

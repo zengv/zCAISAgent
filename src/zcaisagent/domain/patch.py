@@ -2,7 +2,16 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from zcaisagent.domain.enums import AutonomyLevel, RunStatus
-from zcaisagent.domain.models import Answer, Budget, Evidence, Message, Plan, Verdict
+from zcaisagent.domain.models import (
+    Answer,
+    Budget,
+    Evidence,
+    Message,
+    PendingApproval,
+    Plan,
+    ToolInvocation,
+    Verdict,
+)
 
 
 @dataclass
@@ -18,7 +27,11 @@ class StatePatch:
     append_evidence: list[Evidence] = field(default_factory=list)
     replace_evidence: list[Evidence] | None = None
     append_notes: list[str] = field(default_factory=list)
+    append_invocations: list[ToolInvocation] = field(default_factory=list)
     append_message: Message | None = None
     incr_step: int = 0
     incr_repair: int = 0
     last_node: str | None = None
+    pending_approval: PendingApproval | None = None
+    clear_pending_approval: bool = False
+    resume_node: str | None = None

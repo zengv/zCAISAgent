@@ -2,7 +2,7 @@ from tests.conftest import make_state
 from zcaisagent.domain.enums import RunStatus
 from zcaisagent.domain.models import Answer
 from zcaisagent.evaluation.metrics import coverage_report, evaluate_case, summarize
-from zcaisagent.evaluation.runner import filter_cases
+from zcaisagent.evaluation.runner import failed_samples, filter_cases
 
 
 def test_coverage_reports_absolute_target_gaps() -> None:
@@ -140,3 +140,21 @@ def test_avg_actions_is_reported_separately_from_node_steps() -> None:
     report = summarize(results)
     assert report["avg_steps"] == 7.0
     assert report["avg_actions"] == 1.5
+
+
+def test_failed_samples_lists_wrong_and_failed_cases() -> None:
+    cases = [
+        {"id": "q1", "question": "正确题"},
+        {"id": "q2", "question": "答错题"},
+        {"id": "q3", "question": "执行失败题"},
+    ]
+    results = [
+        {"status": "succeeded", "correct": True, "answerable": True, "steps": 3},
+        {"status": "succeeded", "correct": False, "answerable": True, "steps": 4},
+        {"status": "failed", "correct": False, "answerable": True, "steps": 1},
+    ]
+    samples = failed_samples(cases, results)
+
+    assert [item["id"] for item in samples] == ["q2", "q3"]
+    assert samples[0]["question"] == "答错题"
+    assert samples[1]["status"] == "failed"

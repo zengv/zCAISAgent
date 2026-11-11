@@ -33,7 +33,7 @@
     font-family: var(--sans);
     -webkit-font-smoothing: antialiased;
     display: grid;
-    grid-template-columns: 288px 1fr;
+    grid-template-columns: 216px 1fr;
     grid-template-rows: minmax(0, 1fr);
     overflow: hidden;
   }
@@ -150,10 +150,35 @@
 
   .meta code {
     color: var(--ink);
-    max-width: 150px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    max-width: 140px;
+    word-break: break-all;
+    line-height: 1.4;
+    cursor: pointer;
+    text-align: right;
+  }
+
+  .meta code:hover { color: var(--gold); }
+
+  .toast {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%) translateY(8px);
+    background: var(--panel-2);
+    border: 1px solid var(--gold);
+    color: var(--gold);
+    font-size: 12px;
+    padding: 7px 16px;
+    border-radius: 3px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .18s ease, transform .18s ease;
+    z-index: 50;
+  }
+
+  .toast.show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
   }
 
   .rail-actions {
@@ -709,12 +734,13 @@
   </div>
 
   <div class="meta">
-    <div><span>thread</span><code id="mThread">—</code></div>
-    <div><span>run</span><code id="mRun">—</code></div>
+    <div><span>thread</span><code id="mThread" title="点击复制">—</code></div>
+    <div><span>run</span><code id="mRun" title="点击复制">—</code></div>
   </div>
 
   <div class="rail-actions">
     <button class="ghost" id="newThread" type="button">新会话</button>
+    <a class="docs" href="/studio" target="_blank" rel="noopener">Studio ↗</a>
     <a class="docs" href="/docs" target="_blank" rel="noopener">Swagger 文档 ↗</a>
   </div>
 </aside>
@@ -751,6 +777,8 @@
   </form>
 </main>
 
+<div class="toast" id="toast">已复制</div>
+
 <script>
 (() => {
   const $ = (id) => document.getElementById(id);
@@ -773,8 +801,9 @@
   $('newThread').addEventListener('click', () => {
     if (busy) return;
     threadId = newThreadId();
-    $('mThread').textContent = short(threadId);
+    $('mThread').textContent = threadId;
     $('mRun').textContent = '—';
+    $('mRun').dataset.value = '';
     setStage('idle');
     document.querySelectorAll('.msg').forEach((n) => n.remove());
     $('empty').hidden = false;
@@ -811,9 +840,35 @@
     return (crypto.randomUUID && crypto.randomUUID()) || 'thread_' + Date.now().toString(36);
   }
 
-  function short(id) {
-    return id.length > 14 ? id.slice(0, 8) + '…' : id;
+  let toastTimer = null;
+  function showToast(text) {
+    const toast = $('toast');
+    toast.textContent = text;
+    toast.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toast.classList.remove('show'), 1200);
   }
+
+  async function copyText(value) {
+    if (!value || value === '—') return;
+    try {
+      await navigator.clipboard.writeText(value);
+    } catch {
+      // 非安全上下文兜底：临时 textarea + execCommand
+      const box = document.createElement('textarea');
+      box.value = value;
+      box.style.position = 'fixed';
+      box.style.opacity = '0';
+      document.body.appendChild(box);
+      box.select();
+      try { document.execCommand('copy'); } catch { /* 忽略 */ }
+      box.remove();
+    }
+    showToast('已复制');
+  }
+
+  $('mThread').addEventListener('click', () => copyText(threadId));
+  $('mRun').addEventListener('click', () => copyText($('mRun').dataset.value || ''));
 
   function setStage(text, running = false) {
     stageEl.textContent = text;
@@ -1091,8 +1146,9 @@
 
       await readSSE(response, (event, data) => {
         if (event === 'meta') {
-          $('mRun').textContent = short(data.run_id || '—');
-          $('mThread').textContent = short(threadId);
+          $('mRun').textContent = data.run_id || '—';
+          $('mRun').dataset.value = data.run_id || '';
+          $('mThread').textContent = threadId;
         } else if (event === 'token') {
           render(data.text || '');
         } else if (event === 'stage') {
@@ -1163,7 +1219,7 @@
   }
 
   // 初始化
-  $('mThread').textContent = short(threadId);
+  $('mThread').textContent = threadId;
   autosize();
   input.focus();
 })();

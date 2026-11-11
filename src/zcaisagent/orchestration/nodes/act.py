@@ -3,8 +3,8 @@ from __future__ import annotations
 import asyncio
 
 from zcaisagent.capabilities.skills.registry import allowed_sources
-from zcaisagent.capabilities.tools.gateway import to_evidence
-from zcaisagent.domain.models import Plan, RunState, RunStatus
+from zcaisagent.capabilities.tools.gateway import to_evidence, to_invocation
+from zcaisagent.domain.models import PendingApproval, Plan, RunState, RunStatus
 from zcaisagent.domain.patch import StatePatch
 from zcaisagent.orchestration.actions.registry import ActionSpace, build_default_action_space
 from zcaisagent.orchestration.runtime import RunContext
@@ -71,7 +71,62 @@ async def _tool_call(
     name = pending.target or "kb_search"
     args = {**pending.args}
     args.setdefault("query", query)
-    result = await ctx.tools.call(name, args, ctx.auth, state.run_id)
+
+    approval = state.pending_approval
+    if approval is not None and (approval.step_id != pending.id or approval.tool != name):
+        approval = None
+
+    tool = ctx.tools.get(name)
+    risk_level = tool.spec.risk_level if tool is not None else "read"
+    result = await ctx.tools.call(
+        name, args, ctx.auth, state.run_id, approval=approval
+    )
+
+    if result.approval_required:
+        approval_id = result.approval_id or ""
+        return StatePatch(
+            status=RunStatus.AWAITING_USER,
+            pending_approval=PendingApproval(
+                id=approval_id,
+                run_id=state.run_id,
+                step_id=pending.id,
+                tool=name,
+                args=args,
+                risk_level=risk_level,
+            ),
+            resume_node="act",
+            analysis={
+                "action": {
+                    "step_id": pending.id,
+                    "kind": "tool_call",
+                    "tool": name,
+                    "query": query,
+                    "status": "approval_required",
+                    "approval_id": approval_id,
+                }
+            },
+            append_notes=[f"approval_requested:{approval_id}:{name}"],
+        )
+
+    if result.error == "TOOL_REJECTED":
+        return StatePatch(
+            plan=_mark(plan, pending.id, "failed"),
+            clear_pending_approval=True,
+            analysis={
+                "action": {
+                    "step_id": pending.id,
+                    "kind": "tool_call",
+                    "tool": name,
+                    "query": query,
+                    "status": "rejected",
+                    "approval_id": result.approval_id,
+                    "error": result.error,
+                }
+            },
+            append_notes=[f"approval_rejected:{result.approval_id or ''}"],
+            append_invocations=[to_invocation(result, args, risk_level)],
+        )
+
     evidence = to_evidence(result)
     items = [evidence.model_dump(mode="json")] if evidence else []
     status = "ok" if evidence else ("empty" if result.ok else "error")
@@ -85,10 +140,14 @@ async def _tool_call(
         "sources": [f"{name}:{status}"],
         "error": result.error,
     }
+    if approval is not None:
+        action["approval_id"] = approval.id
     return StatePatch(
         plan=_mark(plan, pending.id, "done" if evidence else "failed"),
         analysis={"action": action},
+        clear_pending_approval=approval is not None,
         append_notes=[f"action:{pending.id}:tool_call:{len(items)}"],
+        append_invocations=[to_invocation(result, args, risk_level)],
     )
 
 

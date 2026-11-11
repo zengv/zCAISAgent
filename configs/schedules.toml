@@ -1,0 +1,18 @@
+# 定时任务示例（M2）：调度器只按 cron 触发 Run，不含业务逻辑。
+# concurrency: forbid | replace | allow；misfire: skip | run_once。
+# enabled 默认 false，避免 CI 或本地误触发；需要时置 true 或由控制面开启。
+
+[jobs.daily_research]
+job_id = "daily_research"
+tenant_id = "demo"
+name = "每日行业调研"
+cron = "0 8 * * 1-5"
+timezone = "Asia/Shanghai"
+agent = "deep_research"
+input = { goal = "调研行业最新动态并生成摘要" }
+identity = "service_research"
+enabled = false
+concurrency = "forbid"
+misfire = "run_once"
+timeout_s = 300
+budget_profile = "scheduled"

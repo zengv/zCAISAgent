@@ -4,16 +4,20 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from zcaisagent.capabilities.tools.gateway import ToolGateway
-from zcaisagent.domain.models import RunState, RunStatus
+from zcaisagent.domain.enums import ApprovalStatus, RunStatus
+from zcaisagent.domain.models import RunState
 from zcaisagent.domain.patch import StatePatch
 from zcaisagent.orchestration.graph import GraphSpec
 from zcaisagent.orchestration.policies.budget import BudgetPolicy
 from zcaisagent.orchestration.reducers import apply_patch
+from zcaisagent.ports.cache import CachePort
 from zcaisagent.ports.checkpoint import CheckpointPort
+from zcaisagent.ports.events import EventSinkPort
 from zcaisagent.ports.health import HealthPort, HealthStatus
 from zcaisagent.ports.llm import LLMPort
+from zcaisagent.ports.memory import MemoryPort
 from zcaisagent.ports.retrieval import RetrieverPoolPort, RetrieverPort
-from zcaisagent.ports.security import AuthContext, GuardrailPort
+from zcaisagent.ports.security import AuditPort, AuthContext, GuardrailPort
 from zcaisagent.ports.skills import SkillRegistryPort
 from zcaisagent.ports.trace import TracePort
 
@@ -30,8 +34,14 @@ class RunContext:
     reranker: Any = None
     health: HealthPort | None = None
     guardrail: GuardrailPort | None = None
+    audit: AuditPort | None = None
     skills: SkillRegistryPort | None = None
     tools: ToolGateway | None = None
+    memory: MemoryPort | None = None
+    # 结果缓存；None 表示不缓存（默认）。
+    cache: CachePort | None = None
+    # 事件投递出口；None 表示不投递（默认）。
+    events: EventSinkPort | None = None
     node_timeout_s: float = 30.0
     clock: Any = None
     # 编排层事件出口（如 SSE）；None 时保持纯批量执行。
@@ -55,7 +65,10 @@ class Runtime:
                 )
                 break
 
-            node_name = graph.next_node(state)
+            node_name = self._next_node(graph, state)
+            if node_name == state.resume_node:
+                # resume_node 只生效一次：执行前清空，避免重复进入同一中断点。
+                state = state.model_copy(update={"resume_node": None})
             if node_name in graph.terminals:
                 state = apply_patch(
                     state, StatePatch(status=graph.terminals[node_name])
@@ -127,6 +140,47 @@ class Runtime:
                 },
             )
 
-        await ctx.checkpoint.save(state)
+            if (
+                state.status == RunStatus.AWAITING_USER
+                and state.pending_approval is not None
+            ):
+                if ctx.emit is not None:
+                    await ctx.emit(
+                        "approval_required",
+                        {
+                            "run_id": state.run_id,
+                            "status": state.status.value,
+                            "pending_approval": state.pending_approval.model_dump(
+                                mode="json"
+                            ),
+                        },
+                    )
+                await ctx.checkpoint.save(state)
+                break
+
+        # finished_ts 必须在最后一次落盘前赋值，否则 checkpoint 里永远是 0。
         state.finished_ts = time.time()
+        await ctx.checkpoint.save(state)
         return state
+
+    async def resume(
+        self, graph: GraphSpec, state: RunState, ctx: RunContext
+    ) -> RunState:
+        """审批决策后从 resume_node 继续；预算与步数沿用原状态。"""
+        if state.status != RunStatus.AWAITING_USER:
+            return state
+        approval = state.pending_approval
+        decided = approval is not None and approval.status in {
+            ApprovalStatus.APPROVED,
+            ApprovalStatus.REJECTED,
+        }
+        if not decided and not state.resume_node:
+            return state
+        resumed = state.model_copy(update={"status": RunStatus.RUNNING})
+        return await self.execute(graph, resumed, ctx)
+
+    @staticmethod
+    def _next_node(graph: GraphSpec, state: RunState) -> str:
+        if state.resume_node:
+            return state.resume_node
+        return graph.next_node(state)

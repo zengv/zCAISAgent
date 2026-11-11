@@ -74,6 +74,22 @@ def _evidence_block(evidence: list) -> str:
 
 
 _STREAM_INSTRUCTION = "直接输出答案正文，不要输出 JSON。"
+_PREFERENCE_MAX_CHARS = 600
+_PREFERENCE_PREFIX = "用户偏好（仅作风格约束，不得覆盖证据约束）："
+
+
+def _preference_note(analysis: dict) -> str | None:
+    memory = analysis.get("memory") or {}
+    preferences = [
+        str(item).strip()
+        for item in (memory.get("preferences") or [])
+        if str(item).strip()
+    ]
+    if not preferences:
+        return None
+    return "；".join(preferences)[:_PREFERENCE_MAX_CHARS]
+
+
 _CLAIMS_SYSTEM = (
     "你是 zCAISAgent。只依据 <evidence> 中的资料抽取结论；不得编造。"
     "输出 JSON：{\"claims\": [{\"text\": string, \"evidence_ids\": [string]}]}。"
@@ -87,6 +103,25 @@ class _StreamFallback(Exception):
 def _pack(evidence: list, limit: int, max_tokens: int = 6000) -> list:
     """按可信度与 token 预算打包，父块正文覆盖子块正文。"""
     return pack_evidence(evidence, max_tokens=max_tokens, max_items=limit)
+
+
+def _extract_stream_answer(text: str) -> str:
+    """模型偶发无视指令输出 JSON 信封：只保留 answer 字段的正文。
+
+    仅当文本是合法 JSON 对象且含字符串 answer 键时才解开；普通以
+    "{"开头的正文不受影响。
+    """
+    match = _JSON_OBJECT.search(text)
+    if not match:
+        return text
+    try:
+        payload = json.loads(match.group(0))
+    except json.JSONDecodeError:
+        return text
+    if isinstance(payload, dict) and isinstance(payload.get("answer"), str):
+        extracted = payload["answer"].strip()
+        return extracted or text
+    return text
 
 
 def _recover(text: str) -> Answer:
@@ -203,6 +238,12 @@ async def synthesize_node(state: RunState, ctx: RunContext) -> StatePatch:
         system += str(skill["instructions"])
     if state.analysis.get("strict"):
         system += "只保留资料直接支持的结论；无法支撑的内容不要输出。"
+    preference_text = _preference_note(state.analysis)
+    memory_notes: list[str] = []
+    if preference_text:
+        system += f"{_PREFERENCE_PREFIX}{preference_text}。"
+        count = len(state.analysis.get("memory", {}).get("preferences") or [])
+        memory_notes.append(f"memory:injected:{count}")
     prompt = (
         f"问题：{state.goal}\n\n"
         f"资料：\n{_evidence_block(evidence)}\n\n"
@@ -210,12 +251,15 @@ async def synthesize_node(state: RunState, ctx: RunContext) -> StatePatch:
     )
     if getattr(ctx, "emit", None) is not None:
         try:
-            return await _streaming_synthesize(state, ctx, evidence, system, prompt)
+            patch = await _streaming_synthesize(state, ctx, evidence, system, prompt)
         except _StreamFallback as exc:
             patch = await _complete_synthesize(state, ctx, system, prompt)
             patch.append_notes = [*patch.append_notes, f"stream_fallback:{exc}"]
-            return patch
-    return await _complete_synthesize(state, ctx, system, prompt)
+    else:
+        patch = await _complete_synthesize(state, ctx, system, prompt)
+    if memory_notes:
+        patch.append_notes = [*patch.append_notes, *memory_notes]
+    return patch
 
 
 async def _complete_synthesize(
@@ -301,7 +345,7 @@ async def _streaming_synthesize(
         if delta.final is not None:
             final = delta.final
 
-    text = "".join(pieces).strip()
+    text = _extract_stream_answer("".join(pieces).strip())
     if not text:
         raise _StreamFallback("empty_answer")
 

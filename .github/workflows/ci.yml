@@ -13,7 +13,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -e ".[dev]"
-      - run: ruff check src tests
+      - run: ruff check src tests scripts
       - run: lint-imports
 
   test:
@@ -26,6 +26,16 @@ jobs:
       - run: pip install -e ".[dev]"
       - run: python -m pytest
 
+  fault-drill:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+      - run: python scripts/fault_drill.py
+
   eval-gate:
     runs-on: ubuntu-latest
     steps:
@@ -35,3 +45,13 @@ jobs:
           python-version: "3.12"
       - run: pip install -e ".[dev]"
       - run: python -m zcaisagent.cli eval-gate --report data/eval/baselines/fake-100.json --thresholds configs/eval_gate.ci.toml
+
+  security-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+      - run: python -m zcaisagent.cli security-eval

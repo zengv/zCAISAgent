@@ -86,6 +86,26 @@ def test_cost_is_computed_from_configured_prices(monkeypatch) -> None:
     assert response.cost_usd == pytest.approx(0.005)
 
 
+def test_provider_price_overrides_global_price(monkeypatch) -> None:
+    provs = {
+        "ds": ModelProvider(
+            id="ds", name="ds", model="deepseek-flash",
+            base_url="http://example/v1", api_key="k", context_window=128000,
+            reasoning_effort="low", cost_in=1.0, cost_out=3.0,
+        ),
+    }
+    settings = Settings(
+        model_provider="ds",
+        model_providers=provs,
+        purpose_effort={"default": "low"},
+        input_price_per_mtok=2.0,
+        output_price_per_mtok=6.0,
+    )
+    response = _run_llm(monkeypatch, settings)
+    # 1000 in × $1/M + 500 out × $3/M = 0.0025（provider 单价优先于全局单价）
+    assert response.cost_usd == pytest.approx(0.0025)
+
+
 def test_cost_stays_zero_when_prices_not_configured(monkeypatch) -> None:
     settings = _mk_settings([("ds", "deepseek-flash", "k")])
     response = _run_llm(monkeypatch, settings)

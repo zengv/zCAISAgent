@@ -35,6 +35,8 @@ class LLMResponse(BaseModel):
     reasoning_tokens: int = 0
     cost_usd: float = 0.0
     model: str = ""
+    # 本次响应是否来自结果缓存；命中时 tokens/cost 归零，原 tokens_in 移入 cached_tokens。
+    cache_hit: bool = False
 
 
 class LLMDelta(BaseModel):

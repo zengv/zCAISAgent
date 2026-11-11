@@ -1,0 +1,10 @@
+{"id": "mem_table", "user": "alice", "goals": ["记住：以后回答用表格。", "一线城市住宿标准是多少？"], "expected_preference_keyword": "表格", "tags": ["format"]}
+{"id": "mem_conclusion", "user": "bob", "goals": ["请记住：以后先给结论再解释。", "婚假有几天？"], "expected_preference_keyword": "结论", "tags": ["format"]}
+{"id": "mem_concise", "user": "carol", "goals": ["记住：回答要简洁。", "年假天数是多少？"], "expected_preference_keyword": "简洁", "tags": ["style"]}
+{"id": "mem_list", "user": "dave", "goals": ["记住：以后用列表呈现要点。", "差旅补贴是多少？"], "expected_preference_keyword": "列表", "tags": ["format"]}
+{"id": "mem_cite", "user": "erin", "goals": ["记住：remember to always cite the source.", "临时密码有效期多长？"], "expected_preference_keyword": "cite", "tags": ["evidence"]}
+{"id": "mem_steps", "user": "frank", "goals": ["记住：以后按步骤说明操作。", "加班需要提前多久申请？"], "expected_preference_keyword": "步骤", "tags": ["style"]}
+{"id": "mem_amount", "user": "grace", "goals": ["记住：回答涉及金额时保留两位小数。", "一线城市住宿标准是多少？"], "expected_preference_keyword": "金额", "tags": ["format"]}
+{"id": "mem_chinese", "user": "heidi", "goals": ["记住：始终用中文回答。", "婚假有几天？"], "expected_preference_keyword": "中文", "tags": ["language"]}
+{"id": "mem_formal", "user": "ivan", "goals": ["记住：语气要正式。", "出差补贴是多少？"], "expected_preference_keyword": "正式", "tags": ["style"]}
+{"id": "mem_no_detail", "user": "judy", "goals": ["记住：不要展开无关细节。", "报销需要哪些材料？"], "expected_preference_keyword": "无关细节", "tags": ["style"]}

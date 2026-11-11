@@ -33,6 +33,14 @@ def apply_patch(state: RunState, patch: StatePatch) -> RunState:
     if patch.append_notes:
         update["working_notes"] = [*update["working_notes"], *patch.append_notes]
 
+    if patch.append_invocations:
+        invocations: dict[str, dict] = {
+            item["id"]: item for item in update["tool_invocations"]
+        }
+        for item in patch.append_invocations:
+            invocations[item.id] = item.model_dump()
+        update["tool_invocations"] = list(invocations.values())
+
     if patch.append_message is not None:
         update["messages"] = [
             *update["messages"],
@@ -43,5 +51,12 @@ def apply_patch(state: RunState, patch: StatePatch) -> RunState:
     update["repair_round"] = update["repair_round"] + patch.incr_repair
     if patch.last_node is not None:
         update["last_node"] = patch.last_node
+
+    if patch.clear_pending_approval:
+        update["pending_approval"] = None
+    elif patch.pending_approval is not None:
+        update["pending_approval"] = patch.pending_approval.model_dump()
+    if patch.resume_node is not None:
+        update["resume_node"] = patch.resume_node
 
     return RunState.model_validate(update)

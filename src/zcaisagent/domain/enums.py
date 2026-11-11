@@ -33,6 +33,20 @@ class Support(StrEnum):
     UNSUPPORTED = "unsupported"
 
 
+class ApprovalStatus(StrEnum):
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    CANCELLED = "cancelled"
+
+
+class MemoryKind(StrEnum):
+    WORKING = "working"
+    EPISODIC = "episodic"
+    SEMANTIC = "semantic"
+    PROCEDURAL = "procedural"
+
+
 class NodeName(StrEnum):
     ANALYZE = "analyze"
     ROUTE = "route"

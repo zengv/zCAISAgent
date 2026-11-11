@@ -81,6 +81,9 @@ class ModelProvider:
     api_key: str             # 解析后的明文密钥（从 key_env 读）
     context_window: int
     reasoning_effort: Effort
+    # 单价（$/1M tokens）；0 表示未配置，回退全局 input/output_price_per_mtok。
+    cost_in: float = 0.0
+    cost_out: float = 0.0
 
 
 def _load_config_toml(path: Path) -> dict:
@@ -130,6 +133,111 @@ class RerankConfig:
     style: str = "dashscope"
 
 
+@dataclass(frozen=True)
+class SecurityConfig:
+    """RBAC / 认证配置；未声明的角色默认无 scope。"""
+
+    roles: dict[str, list[str]] = field(default_factory=dict)
+    acl_tokens_by_role: dict[str, list[str]] = field(default_factory=dict)
+    identity_mode: Literal["api_key", "oidc"] = "api_key"
+    oidc_introspection_url: str = ""
+    oidc_client_id: str = ""
+    oidc_client_secret_env: str = ""
+    oidc_timeout_s: float = 5.0
+    # OPA 策略端点；为空时使用内置 RBAC。
+    opa_url: str = ""
+    opa_timeout_s: float = 3.0
+
+
+@dataclass(frozen=True)
+class ToolsConfig:
+    """外部工具接入配置；默认只读、MCP 关闭。"""
+
+    mcp_servers: list[dict] = field(default_factory=list)
+    openapi: dict = field(default_factory=dict)
+    sql: dict = field(default_factory=dict)
+    enable_kb_search: bool = True
+    enable_ticket: bool = False
+
+
+@dataclass(frozen=True)
+class MemoryConfig:
+    """记忆子系统配置；默认开启，ttl_s=0 表示不过期。"""
+
+    enabled: bool = True
+    distill_enabled: bool = True
+    max_items: int = 200
+    ttl_s: float = 0.0
+
+
+@dataclass(frozen=True)
+class CacheConfig:
+    """结果缓存配置；默认关闭，后端默认进程内。"""
+
+    enabled: bool = False
+    ttl_s: float = 300.0
+    max_entries: int = 1000
+    llm_enabled: bool = True
+    backend: Literal["memory", "redis"] = "memory"
+    redis_url: str = ""
+    redis_timeout_s: float = 1.0
+
+
+@dataclass(frozen=True)
+class SchedulerConfig:
+    """定时任务配置；默认关闭。"""
+
+    enabled: bool = False
+    tick_s: float = 30.0
+
+
+@dataclass(frozen=True)
+class EventsConfig:
+    """事件投递配置；默认关闭。"""
+
+    enabled: bool = False
+    webhook_urls: list[str] = field(default_factory=list)
+    secret_env: str = "ZCAISAGENT_EVENT_SECRET"
+    max_retries: int = 3
+    dead_letter_path: Path = field(
+        default_factory=lambda: Path(".zcaisagent/dead_letter.jsonl")
+    )
+
+
+@dataclass(frozen=True)
+class StudioConfig:
+    """Studio 看板的数据文件路径：latest 报告、门禁阈值与基线回退目录。"""
+
+    eval_report_path: Path = Path("data/eval/latest.json")
+    eval_gate_path: Path = Path("configs/eval_gate.toml")
+    baseline_dir: Path = Path("data/eval/baselines")
+
+
+@dataclass(frozen=True)
+class SecretConfig:
+    """密钥来源配置；默认从环境变量读取。"""
+
+    provider: Literal["env", "vault"] = "env"
+    vault_addr: str = ""
+    vault_token_env: str = "VAULT_TOKEN"
+    vault_mount: str = "secret"
+    vault_path: str = "zcaisagent"
+
+
+def _env_flag(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if not value:
+        return default
+    return value.lower() in _TRUE_VALUES
+
+
+def _env_list(name: str) -> list[str] | None:
+    value = os.getenv(name)
+    if not value:
+        return None
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
 def _build_providers(cfg: dict, env: dict[str, str]) -> dict[str, ModelProvider]:
     raw = cfg.get("model_providers", {}) or {}
     providers: dict[str, ModelProvider] = {}
@@ -142,6 +250,8 @@ def _build_providers(cfg: dict, env: dict[str, str]) -> dict[str, ModelProvider]
             api_key=_resolve_key(body.get("key_env", ""), env),
             context_window=int(body.get("context_window", 0)),
             reasoning_effort=body.get("reasoning_effort", "low"),
+            cost_in=float(body.get("cost_in", 0) or 0),
+            cost_out=float(body.get("cost_out", 0) or 0),
         )
     return providers
 
@@ -219,6 +329,17 @@ class Settings:
     max_context_tokens: int = 6000
     # pgvector 持久化；None 表示未启用（纯内存，行为与旧版一致）。
     database: DatabaseConfig | None = None
+
+    # —— M2 治理配置（默认 None / 关闭） ——
+    security: SecurityConfig | None = None
+    tools: ToolsConfig | None = None
+    memory: MemoryConfig = field(default_factory=MemoryConfig)
+    cache: CacheConfig | None = None
+    scheduler: SchedulerConfig | None = None
+    events: EventsConfig | None = None
+    secret: SecretConfig | None = None
+    # Studio 看板读取的评估报告 / 门禁 / 基线路径。
+    studio: StudioConfig = field(default_factory=StudioConfig)
 
     # —— 运行参数 ——
     api_key: str = "dev-key"
@@ -337,6 +458,180 @@ class Settings:
                 style=str(raw_rerank.get("style", "dashscope")),
             )
 
+        # [security]：角色 → scopes、ACL token 映射、身份模式与 OIDC introspection。
+        raw_security = cfg.get("security")
+        security: SecurityConfig | None = None
+        if raw_security is not None:
+            raw_oidc = raw_security.get("oidc", {}) or {}
+            raw_opa = raw_security.get("opa", {}) or {}
+            identity_mode = env.get(
+                f"{ENV_PREFIX}SECURITY_IDENTITY",
+                str(raw_security.get("identity", "api_key")),
+            )
+            security = SecurityConfig(
+                roles={
+                    role: list(scopes)
+                    for role, scopes in (raw_security.get("roles", {}) or {}).items()
+                },
+                acl_tokens_by_role={
+                    role: list(tokens)
+                    for role, tokens in (
+                        raw_security.get("acl_tokens_by_role", {}) or {}
+                    ).items()
+                },
+                identity_mode="oidc" if identity_mode == "oidc" else "api_key",
+                oidc_introspection_url=str(raw_oidc.get("introspection_url", "")),
+                oidc_client_id=str(raw_oidc.get("client_id", "")),
+                oidc_client_secret_env=str(raw_oidc.get("client_secret_env", "")),
+                oidc_timeout_s=float(raw_oidc.get("timeout_s", 5.0)),
+                opa_url=str(raw_opa.get("url", "")),
+                opa_timeout_s=float(raw_opa.get("timeout_s", 3.0)),
+            )
+
+        # [tools]：MCP / OpenAPI / SQL 接入物 + 内置工具开关。
+        raw_tools = cfg.get("tools")
+        tools: ToolsConfig | None = None
+        if raw_tools is not None:
+            mcp_servers = [
+                dict(server) for server in (raw_tools.get("mcp_servers", []) or [])
+            ]
+            nested_servers = (raw_tools.get("mcp", {}) or {}).get("servers", {}) or {}
+            for name, body in nested_servers.items():
+                mcp_servers.append({"name": name, **dict(body)})
+            builtin = dict(raw_tools.get("builtin", {}) or {})
+            tools = ToolsConfig(
+                mcp_servers=mcp_servers,
+                openapi=dict(raw_tools.get("openapi", {}) or {}),
+                sql=dict(raw_tools.get("sql", {}) or {}),
+                enable_kb_search=_env_flag(
+                    f"{ENV_PREFIX}TOOLS_ENABLE_KB_SEARCH",
+                    bool(raw_tools.get("enable_kb_search", True)),
+                ),
+                enable_ticket=_env_flag(
+                    f"{ENV_PREFIX}TOOLS_ENABLE_TICKET",
+                    bool(builtin.get("ticket_enabled", raw_tools.get("enable_ticket", False))),
+                ),
+            )
+
+        # [memory]：三类记忆开关、条数上限与 TTL（0 表示不过期）。
+        raw_memory = cfg.get("memory", {}) or {}
+        memory = MemoryConfig(
+            enabled=_env_flag(
+                f"{ENV_PREFIX}MEMORY_ENABLED", bool(raw_memory.get("enabled", True))
+            ),
+            distill_enabled=_env_flag(
+                f"{ENV_PREFIX}MEMORY_DISTILL_ENABLED",
+                bool(raw_memory.get("distill_enabled", True)),
+            ),
+            max_items=int(
+                env.get(f"{ENV_PREFIX}MEMORY_MAX_ITEMS", raw_memory.get("max_items", 200))
+            ),
+            ttl_s=float(env.get(f"{ENV_PREFIX}MEMORY_TTL_S", raw_memory.get("ttl_s", 0))),
+        )
+
+        raw_cache = cfg.get("cache")
+        cache: CacheConfig | None = None
+        if raw_cache is not None:
+            backend = env.get(
+                f"{ENV_PREFIX}CACHE_BACKEND", str(raw_cache.get("backend", "memory"))
+            )
+            cache = CacheConfig(
+                enabled=_env_flag(
+                    f"{ENV_PREFIX}CACHE_ENABLED", bool(raw_cache.get("enabled", False))
+                ),
+                ttl_s=float(env.get(f"{ENV_PREFIX}CACHE_TTL_S", raw_cache.get("ttl_s", 300))),
+                max_entries=int(
+                    env.get(
+                        f"{ENV_PREFIX}CACHE_MAX_ENTRIES",
+                        raw_cache.get("max_entries", 1000),
+                    )
+                ),
+                llm_enabled=_env_flag(
+                    f"{ENV_PREFIX}CACHE_LLM_ENABLED",
+                    bool(raw_cache.get("llm_enabled", True)),
+                ),
+                backend="redis" if backend == "redis" else "memory",
+                redis_url=env.get(
+                    f"{ENV_PREFIX}REDIS_URL", str(raw_cache.get("redis_url", ""))
+                ),
+                redis_timeout_s=float(
+                    env.get(
+                        f"{ENV_PREFIX}REDIS_TIMEOUT_S",
+                        raw_cache.get("redis_timeout_s", 1.0),
+                    )
+                ),
+            )
+
+        raw_scheduler = cfg.get("scheduler")
+        scheduler: SchedulerConfig | None = None
+        if raw_scheduler is not None:
+            scheduler = SchedulerConfig(
+                enabled=_env_flag(
+                    f"{ENV_PREFIX}SCHEDULER_ENABLED",
+                    bool(raw_scheduler.get("enabled", False)),
+                ),
+                tick_s=float(
+                    env.get(f"{ENV_PREFIX}SCHEDULER_TICK_S", raw_scheduler.get("tick_s", 30))
+                ),
+            )
+
+        raw_events = cfg.get("events")
+        events: EventsConfig | None = None
+        if raw_events is not None:
+            webhook_urls = list(raw_events.get("webhook_urls", []) or [])
+            override_urls = _env_list(f"{ENV_PREFIX}EVENTS_WEBHOOK_URLS")
+            if override_urls is not None:
+                webhook_urls = override_urls
+            events = EventsConfig(
+                enabled=_env_flag(
+                    f"{ENV_PREFIX}EVENTS_ENABLED", bool(raw_events.get("enabled", False))
+                ),
+                webhook_urls=webhook_urls,
+                secret_env=str(raw_events.get("secret_env", "ZCAISAGENT_EVENT_SECRET")),
+                max_retries=int(raw_events.get("max_retries", 3)),
+                dead_letter_path=Path(
+                    env.get(
+                        f"{ENV_PREFIX}EVENTS_DEAD_LETTER",
+                        raw_events.get("dead_letter_path", ".zcaisagent/dead_letter.jsonl"),
+                    )
+                ).expanduser(),
+            )
+
+        raw_studio = cfg.get("studio", {}) or {}
+        studio = StudioConfig(
+            eval_report_path=_env_path(
+                env,
+                f"{ENV_PREFIX}STUDIO_EVAL_REPORT",
+                str(raw_studio.get("eval_report_path", "data/eval/latest.json")),
+            ),
+            eval_gate_path=_env_path(
+                env,
+                f"{ENV_PREFIX}STUDIO_EVAL_GATE",
+                str(raw_studio.get("eval_gate_path", "configs/eval_gate.toml")),
+            ),
+            baseline_dir=_env_path(
+                env,
+                f"{ENV_PREFIX}STUDIO_BASELINE_DIR",
+                str(raw_studio.get("baseline_dir", "data/eval/baselines")),
+            ),
+        )
+
+        raw_secret = cfg.get("secret")
+        secret: SecretConfig | None = None
+        if raw_secret is not None:
+            provider = env.get(
+                f"{ENV_PREFIX}SECRET_PROVIDER", str(raw_secret.get("provider", "env"))
+            )
+            secret = SecretConfig(
+                provider="vault" if provider == "vault" else "env",
+                vault_addr=env.get(
+                    f"{ENV_PREFIX}VAULT_ADDR", str(raw_secret.get("vault_addr", ""))
+                ),
+                vault_token_env=str(raw_secret.get("vault_token_env", "VAULT_TOKEN")),
+                vault_mount=str(raw_secret.get("vault_mount", "secret")),
+                vault_path=str(raw_secret.get("vault_path", "zcaisagent")),
+            )
+
         return cls(
             model_provider=default_provider_id,
             model_providers=providers,
@@ -351,6 +646,14 @@ class Settings:
             parent_max_chars=parent_max_chars,
             max_context_tokens=max_context_tokens,
             database=database,
+            security=security,
+            tools=tools,
+            memory=memory,
+            cache=cache,
+            scheduler=scheduler,
+            events=events,
+            secret=secret,
+            studio=studio,
             llm_provider="openai" if providers else "fake",
             api_key=env.get(f"{ENV_PREFIX}API_KEY", "dev-key"),
             default_tenant=env.get(f"{ENV_PREFIX}DEFAULT_TENANT", "demo"),

@@ -1,0 +1,40 @@
+# 工具接入示例（M2）：MCP / OpenAPI / 只读 SQL / 内置工单。
+# 所有外部工具默认不注册；enabled=false 时容器只保留 kb_search。
+# 该文件为独立示例，内容可合并到 config.toml 的 [tools] 段。
+
+[tools]
+enable_kb_search = true
+
+# 内置工单工具：ticket_create 为写工具（强制审批），ticket_list 为只读。
+# 便于审批演示，示例配置默认开启；生产环境按需关闭。
+[tools.builtin]
+ticket_enabled = true
+
+# stdio MCP Server：command + args 启动，tools/list 结果注册为只读工具；
+# prefix 用于避免与内置工具重名，env 为附加环境变量。
+[tools.mcp.servers.local-files]
+command = "python"
+args = ["-m", "mcp_server_files"]
+enabled = false
+prefix = "mcp_"
+timeout_s = 20
+env = {}
+
+# OpenAPI 白名单：只有 operations 列出的 operationId 允许生成工具。
+# spec 支持本地 JSON 文件或 http(s) URL；YAML 需先转 JSON。
+# secret_key 是 SecretPort 的键名，密钥不会落盘；header_name/header_prefix 拼装密钥头。
+[tools.openapi.sources.ticket-api]
+spec = "configs/openapi.json"
+base_url = "https://api.example.com"
+operations = ["getTicket", "listTickets"]
+secret_key = "ZCAISAGENT_OPENAPI_KEY"
+header_name = "Authorization"
+header_prefix = "Bearer "
+enabled = false
+
+# 只读 SQL：SQLite 文件 + 表白名单 + 行数上限；tool_name 可覆盖默认 sql_readonly。
+[tools.sql.sources.support-db]
+path = "data/support.db"
+tables = ["tickets", "customers"]
+max_rows = 200
+enabled = false

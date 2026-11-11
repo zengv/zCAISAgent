@@ -4,13 +4,26 @@ import json
 import sys
 import time
 import uuid
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
-from zcaisagent.container import build_container, build_context, create_state
+from zcaisagent.capabilities.memory.distill import distill_and_write
+from zcaisagent.capabilities.memory.policies import write_explicit_memory
+from zcaisagent.container import (
+    build_cache,
+    build_container,
+    build_context,
+    create_state,
+    invalidate_retrieval_cache,
+)
 from zcaisagent.domain.enums import AutonomyLevel
 from zcaisagent.domain.models import Message, RunState
 from zcaisagent.orchestration.build import build_default_graph
 from zcaisagent.orchestration.runtime import Runtime
+from zcaisagent.ports.security import AuditEvent
+from zcaisagent.scheduler.jobs import ContainerRunLauncher, load_jobs
+from zcaisagent.scheduler.service import SchedulerService
 
 # 多轮上下文窗口，与 api/service.py 保持一致。
 _HISTORY_WINDOW = 6
@@ -35,7 +48,83 @@ async def _run(
         history=history,
     )
     ctx = build_context(container, auth)
-    return await Runtime().execute(build_default_graph(), state, ctx)
+    await write_explicit_memory(container.memory, state.goal, ctx)
+    result = await Runtime().execute(build_default_graph(), state, ctx)
+    await distill_and_write(container.memory, result, ctx)
+    return result
+
+
+def build_scheduler_launcher(container) -> ContainerRunLauncher:
+    """调度器触发 Run 的执行回调；容器装配细节留在 CLI 层。"""
+
+    async def run_goal(goal: str, tenant_id: str, user_id: str, level: str) -> str:
+        auth = await container.identity.authenticate(
+            container.settings.api_key,
+            {"tenant_id": tenant_id, "user_id": user_id},
+        )
+        state = create_state(
+            container,
+            goal=goal,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            level=_parse_level(level),
+            auth=auth,
+        )
+        ctx = build_context(container, auth)
+        await write_explicit_memory(container.memory, state.goal, ctx)
+        result = await Runtime().execute(build_default_graph(), state, ctx)
+        await distill_and_write(container.memory, result, ctx)
+        await container.audit.append(
+            AuditEvent(
+                action="run.finished",
+                actor=user_id,
+                tenant_id=tenant_id,
+                run_id=result.run_id,
+                detail={
+                    "status": result.status.value,
+                    "steps": result.step,
+                    "source": "scheduler",
+                },
+            )
+        )
+        return result.run_id
+
+    return ContainerRunLauncher(run_goal)
+
+
+def _parse_scheduler_now(value: str | None) -> datetime:
+    if not value:
+        return datetime.now(ZoneInfo("Asia/Shanghai"))
+    parsed = datetime.fromisoformat(value)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=ZoneInfo("Asia/Shanghai"))
+    return parsed
+
+
+def cmd_scheduler_tick(args: argparse.Namespace) -> int:
+    jobs = load_jobs(Path(args.config))
+    container = build_container()
+    now = _parse_scheduler_now(args.now)
+
+    async def _tick():
+        service = SchedulerService(
+            build_scheduler_launcher(container),
+            audit=container.audit,
+            events=container.events,
+        )
+        for job in jobs:
+            await service.upsert(job)
+        return await service.tick(now)
+
+    runs = asyncio.run(_tick())
+    print(
+        json.dumps(
+            [run.model_dump(mode="json") for run in runs],
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+    return 0
 
 
 def _print_state(state: RunState) -> None:
@@ -118,12 +207,16 @@ def cmd_chat(args: argparse.Namespace) -> int:
 
 
 def cmd_eval(args: argparse.Namespace) -> int:
+    from zcaisagent.evaluation.report import build_report, write_report
     from zcaisagent.evaluation.runner import filter_cases, load_cases, run_dataset
 
     cases = load_cases(Path(args.path))
     cases = filter_cases(cases, tag=args.tag, level=args.level)
     container = build_container()
     report = asyncio.run(run_dataset(container, cases))
+    if args.out:
+        report = build_report(report, len(cases))
+        write_report(report, Path(args.out))
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 0
 
@@ -161,6 +254,27 @@ def cmd_eval_gate(args: argparse.Namespace) -> int:
         )
     )
     return 0 if result.passed else 1
+
+
+def cmd_memory_eval(args: argparse.Namespace) -> int:
+    from zcaisagent.evaluation.memory import load_memory_cases, run_memory_eval
+    from zcaisagent.settings import Settings
+
+    cases = load_memory_cases(Path(args.path))
+    container = build_container(Settings())
+    report = asyncio.run(run_memory_eval(container, cases))
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_security_eval(args: argparse.Namespace) -> int:
+    from zcaisagent.evaluation.security import load_security_cases, run_security_eval
+    from zcaisagent.governance.guards import RuleGuardrail
+
+    cases = load_security_cases(Path(args.path))
+    report = asyncio.run(run_security_eval(RuleGuardrail(), cases))
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    return 0 if report["overall_pass_rate"] >= 0.9 else 1
 
 
 def cmd_grade(args: argparse.Namespace) -> int:
@@ -286,6 +400,11 @@ def cmd_index(args: argparse.Namespace) -> int:
         print(json.dumps({"error": str(exc)}, ensure_ascii=False))
         return 1
 
+    # 索引已变更，旧检索缓存必须失效。
+    cache = build_cache(settings)
+    if cache is not None:
+        asyncio.run(invalidate_retrieval_cache(cache))
+
     print(
         json.dumps(
             {"written": written, "dimensions": database.dimensions},
@@ -333,6 +452,9 @@ def main() -> int:
         "--level", default=None, choices=["L0", "L1", "L2", "L3"],
         help="only run cases at this level",
     )
+    evaluate.add_argument(
+        "--out", default=None, help="write the report JSON to this path"
+    )
     evaluate.set_defaults(func=cmd_eval)
 
     grading = sub.add_parser("grade", help="run routing grading set")
@@ -353,6 +475,18 @@ def main() -> int:
         "--thresholds", default="configs/eval_gate.toml", help="threshold TOML"
     )
     gate.set_defaults(func=cmd_eval_gate)
+
+    memory_eval = sub.add_parser(
+        "memory-eval", help="run multi-turn memory recall/injection evaluation"
+    )
+    memory_eval.add_argument("path", nargs="?", default="data/eval/memory_cases.jsonl")
+    memory_eval.set_defaults(func=cmd_memory_eval)
+
+    security_eval = sub.add_parser(
+        "security-eval", help="run prompt-injection red-team gate"
+    )
+    security_eval.add_argument("path", nargs="?", default="data/eval/security.jsonl")
+    security_eval.set_defaults(func=cmd_security_eval)
 
     retrieval = sub.add_parser("retrieval-eval", help="run retrieval-only evaluation")
     retrieval.add_argument("path", nargs="?", default="data/eval/golden.jsonl")
@@ -382,6 +516,19 @@ def main() -> int:
     rerank_server.add_argument("--host", default="127.0.0.1")
     rerank_server.add_argument("--port", type=int, default=8090)
     rerank_server.set_defaults(func=cmd_rerank_server)
+
+    scheduler = sub.add_parser("scheduler", help="run scheduled jobs")
+    scheduler_sub = scheduler.add_subparsers(dest="scheduler_action", required=True)
+    tick = scheduler_sub.add_parser("tick", help="trigger jobs matching --now")
+    tick.add_argument(
+        "--now",
+        default=None,
+        help="ISO8601 time; defaults to now in Asia/Shanghai",
+    )
+    tick.add_argument(
+        "--config", default="configs/schedules.toml", help="job definition TOML"
+    )
+    tick.set_defaults(func=cmd_scheduler_tick)
 
     args = parser.parse_args()
     return args.func(args)

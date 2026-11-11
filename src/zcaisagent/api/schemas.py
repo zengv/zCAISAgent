@@ -1,4 +1,6 @@
+import json
 import time
+from datetime import datetime
 
 from pydantic import BaseModel, Field
 
@@ -14,10 +16,28 @@ class RunRequest(BaseModel):
     level: str | None = None
 
 
+class ApprovalDecision(BaseModel):
+    """审批/拒绝请求体；body 可空。"""
+
+    reason: str = ""
+    actor: str | None = None
+
+
 class CitationOut(BaseModel):
     evidence_id: str
     quote: str | None = None
     confidence: float = 0.0
+
+
+class ApprovalOut(BaseModel):
+    """HITL 卡片：只暴露参数键与前 80 字符，避免泄漏完整敏感值。"""
+
+    id: str
+    tool: str
+    risk_level: str
+    args_summary: dict[str, str] = Field(default_factory=dict)
+    status: str
+    requested_at: datetime
 
 
 class MetricsOut(BaseModel):
@@ -46,6 +66,33 @@ class RunResponse(BaseModel):
     mandate_id: str | None = None
     limitations: list[str] = Field(default_factory=list)
     metrics: MetricsOut = Field(default_factory=MetricsOut)
+    approval: ApprovalOut | None = None
+
+
+def _args_summary(args: dict) -> dict[str, str]:
+    summary: dict[str, str] = {}
+    for key, value in args.items():
+        text = (
+            value
+            if isinstance(value, str)
+            else json.dumps(value, ensure_ascii=False, default=str)
+        )
+        summary[str(key)] = text[:80]
+    return summary
+
+
+def build_approval(state: RunState) -> ApprovalOut | None:
+    approval = state.pending_approval
+    if approval is None:
+        return None
+    return ApprovalOut(
+        id=approval.id,
+        tool=approval.tool,
+        risk_level=approval.risk_level,
+        args_summary=_args_summary(approval.args),
+        status=approval.status.value,
+        requested_at=approval.requested_at,
+    )
 
 
 def build_metrics(state: RunState) -> MetricsOut:

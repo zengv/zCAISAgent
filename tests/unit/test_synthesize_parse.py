@@ -5,12 +5,31 @@ from tests.conftest import make_state
 from zcaisagent.domain.enums import AutonomyLevel
 from zcaisagent.domain.models import Evidence
 from zcaisagent.orchestration.nodes.synthesize import (
+    _extract_stream_answer,
     _max_tokens,
     _parse_answer,
     _timeout_s,
     synthesize_node,
 )
 from zcaisagent.ports.llm import LLMResponse
+
+
+def test_extract_stream_answer_unwraps_json_envelope() -> None:
+    text = (
+        '{"answer":"按《差旅与报销管理办法（2026 版）》，一线城市住宿标准为 800 元/晚。",'
+        '"claims":[{"text":"一线城市住宿标准为 800 元/晚。","evidence_ids":["t#0"]}]}'
+    )
+    assert _extract_stream_answer(text) == (
+        "按《差旅与报销管理办法（2026 版）》，一线城市住宿标准为 800 元/晚。"
+    )
+
+
+def test_extract_stream_answer_keeps_plain_text() -> None:
+    plain = "一线城市住宿标准为 800 元/晚。"
+    assert _extract_stream_answer(plain) == plain
+    # 非法 JSON / 无 answer 键的 JSON 都原样保留。
+    assert _extract_stream_answer('{"broken": "json') == '{"broken": "json'
+    assert _extract_stream_answer('{"other": "字段"}') == '{"other": "字段"}'
 
 
 def test_parse_answer_recovers_truncated_json() -> None:

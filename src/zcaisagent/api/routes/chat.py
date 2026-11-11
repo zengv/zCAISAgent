@@ -5,11 +5,17 @@ from fastapi import APIRouter, Header, HTTPException
 from fastapi.responses import StreamingResponse
 
 from zcaisagent.api.deps import get_container
-from zcaisagent.api.schemas import CitationOut, RunRequest, RunResponse, build_metrics
-from zcaisagent.api.service import build_run_state, execute_run
+from zcaisagent.api.schemas import RunRequest, RunResponse
+from zcaisagent.api.service import (
+    build_run_state,
+    execute_run,
+    publish_run_events,
+    to_response,
+)
+from zcaisagent.capabilities.memory.distill import distill_and_write
+from zcaisagent.capabilities.memory.policies import write_explicit_memory
 from zcaisagent.container import build_context
 from zcaisagent.domain.models import RunState
-from zcaisagent.domain.stage import ticket_stage
 from zcaisagent.orchestration.build import build_default_graph
 from zcaisagent.orchestration.runtime import Runtime
 from zcaisagent.ports.security import AuditEvent, AuthContext
@@ -19,32 +25,6 @@ router = APIRouter()
 
 def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
-
-
-def _to_response(state: RunState) -> RunResponse:
-    answer = state.answer
-    return RunResponse(
-        run_id=state.run_id,
-        thread_id=state.thread_id,
-        status=state.status.value,
-        stage=ticket_stage(state).value,
-        answer=answer.text if answer else "",
-        confidence=answer.confidence if answer else "low",
-        abstained=answer.abstained if answer else True,
-        citations=[
-            CitationOut(
-                evidence_id=citation.evidence_id,
-                quote=citation.quote,
-                confidence=citation.confidence,
-            )
-            for citation in (answer.citations if answer else [])
-        ],
-        evidence_count=len(state.evidence),
-        steps=state.step,
-        mandate_id=state.mandate.id if state.mandate else None,
-        limitations=answer.limitations if answer else [],
-        metrics=build_metrics(state),
-    )
 
 
 async def _authenticate(x_api_key: str, request: RunRequest):
@@ -72,7 +52,7 @@ async def create_run(
 ) -> RunResponse:
     auth = await _authenticate(x_api_key, request)
     state = await _execute(auth, request)
-    return _to_response(state)
+    return to_response(state)
 
 
 @router.post("/chat")
@@ -99,7 +79,9 @@ async def chat(
     ctx.emit = emit
 
     async def run() -> RunState:
+        await write_explicit_memory(container.memory, state.goal, ctx)
         result = await Runtime().execute(build_default_graph(), state, ctx)
+        await distill_and_write(container.memory, result, ctx)
         await container.audit.append(
             AuditEvent(
                 action="run.finished",
@@ -109,6 +91,7 @@ async def chat(
                 detail={"status": result.status.value, "steps": result.step},
             )
         )
+        await publish_run_events(container.events, result)
         return result
 
     task = asyncio.create_task(run())
@@ -144,11 +127,12 @@ async def chat(
             if not task.done():
                 task.cancel()
 
-        response = _to_response(result)
+        response = to_response(result)
         yield _sse(
             "done",
             {
                 "run_id": response.run_id,
+                "status": response.status,
                 "answer": response.answer,
                 "abstained": response.abstained,
                 "citations": [c.model_dump() for c in response.citations],

@@ -20,9 +20,12 @@ class OpenAICompatLLM:
         timeout_s: float = 60.0,
         input_price_per_mtok: float = 0.0,
         output_price_per_mtok: float = 0.0,
+        transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         self.settings = settings
         self.timeout_s = timeout_s
+        # 可选注入传输层，用于故障演练与契约测试；None 时保持默认网络行为。
+        self.transport = transport
         self.input_price_per_mtok = input_price_per_mtok or settings.input_price_per_mtok
         self.output_price_per_mtok = (
             output_price_per_mtok or settings.output_price_per_mtok
@@ -65,6 +68,13 @@ class OpenAICompatLLM:
             "no usable provider — check config.toml and API key env vars"
         )
 
+    def _price_for(self, provider: ModelProvider) -> tuple[float, float]:
+        """provider 单价优先；未配置（0）时回退全局单价。"""
+        return (
+            provider.cost_in or self.input_price_per_mtok,
+            provider.cost_out or self.output_price_per_mtok,
+        )
+
     async def _complete_with_provider(
         self, provider: ModelProvider, req: LLMRequest
     ) -> LLMResponse:
@@ -78,7 +88,9 @@ class OpenAICompatLLM:
             payload["chat_template_kwargs"] = {"thinking": False}
         headers = {"Authorization": f"Bearer {provider.api_key}"}
         timeout = req.timeout_s if req.timeout_s is not None else self.timeout_s
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with httpx.AsyncClient(
+            timeout=timeout, transport=self.transport
+        ) as client:
             response = await client.post(
                 f"{provider.base_url}/chat/completions", json=payload, headers=headers
             )
@@ -96,9 +108,10 @@ class OpenAICompatLLM:
             or usage.get("prompt_cache_hit_tokens", 0)
             or 0
         )
+        cost_in_price, cost_out_price = self._price_for(provider)
         cost = (
-            tokens_in / 1e6 * self.input_price_per_mtok
-            + tokens_out / 1e6 * self.output_price_per_mtok
+            tokens_in / 1e6 * cost_in_price
+            + tokens_out / 1e6 * cost_out_price
         )
         return LLMResponse(
             text=text,
@@ -183,9 +196,10 @@ class OpenAICompatLLM:
         tokens_out = int(usage.get("completion_tokens", 0))
         details = usage.get("completion_tokens_details") or {}
         prompt_details = usage.get("prompt_tokens_details") or {}
+        cost_in_price, cost_out_price = self._price_for(provider)
         cost = (
-            tokens_in / 1e6 * self.input_price_per_mtok
-            + tokens_out / 1e6 * self.output_price_per_mtok
+            tokens_in / 1e6 * cost_in_price
+            + tokens_out / 1e6 * cost_out_price
         )
         yield LLMDelta(
             text="",

@@ -2,7 +2,7 @@
 
 > 通用 Agent 为内核，Agentic RAG 为内置能力：可私有化、可审计、可评估、可扩展。
 
-当前阶段：**M1 欠账已收口**（两阶段真流式 + 多源召回/RRF/专用 rerank + HyDE 与父子块（默认关闭）+ pgvector 持久化 + 评估门禁，226 项测试全绿）。五份方案文档 + 代码：
+当前阶段：**M2 已完成，M3 产品化交付**（Studio 四页、Admin 平台 API、成本/延迟/质量看板、压测与故障演练、Python SDK，400+ 项测试全绿）。八份文档 + 代码：
 
 | 文档                                         | 内容                                                         | 适合谁         |
 | ------------------------------------------ | ---------------------------------------------------------- | ----------- |
@@ -11,6 +11,9 @@
 | [03 · 技术架构方案](docs/03-architecture.md)     | 分层架构、运行时模型、领域模型与端口契约、检索/工具/记忆/编排/治理/评估/可观测、部署与配置           | 研发、架构       |
 | [04 · 工程落地计划](docs/04-engineering-plan.md) | 目录骨架、依赖规则、扩展点手册、里程碑与 DoD、测试策略、ADR                          | 研发、项目管理     |
 | [05 · PRD 需求契约](docs/05-prd.md)            | 80 条稳定编号功能需求、AI 专项规格（模型/提示/证据/失败模式/标注）、状态机、共享规则与开放问题       | 产品、研发、测试    |
+| [06 · 部署手册](docs/06-deployment.md)          | 本地 / Docker Compose / 单机生产、环境变量、可选依赖与回退、安全清单、升级回滚             | 运维、交付       |
+| [07 · 运维手册](docs/07-runbook.md)             | 健康检查、观测入口、故障处置、备份恢复、容量与扩容、故障演练、事故响应                            | 运维、值班       |
+| [08 · Python SDK](docs/08-sdk.md)            | 安装、认证、Run 查询、SSE 流式、审批、指标与健康、异常与重试                       | 集成开发        |
 
 ***
 
@@ -174,6 +177,7 @@ $env:PYTHONPATH="src"
 python -m zcaisagent.cli ask "一线城市住宿标准是多少？"
 python -m pytest
 python -m zcaisagent.cli eval data/eval/golden.jsonl
+python -m zcaisagent.cli eval --out data/eval/latest.json       # 写入 Studio 评估页读取的最新报告
 python -m zcaisagent.cli retrieval-eval --source fused          # 检索评测（fused 或任一源名）
 python -m zcaisagent.cli retrieval-eval --source fused --rerank # 融合后重排评测
 python -m zcaisagent.cli eval-gate --path data/eval/golden.jsonl  # 评估门禁（违规返回 1）
@@ -183,9 +187,40 @@ python -m zcaisagent.cli rerank-server --port 8090              # 本地 /v1/rer
 uvicorn zcaisagent.api.app:app --reload --port 8080
 ```
 
+服务启动后（另开终端）：
+
+```powershell
+python scripts/loadtest.py --concurrency 20 --requests 40  # 压测并写入 data/perf/
+python scripts/fault_drill.py                               # 四类故障演练，写入 data/drills/
+```
+
+访问 <http://127.0.0.1:8080/studio> 打开 Studio；`loadtest.py` 默认请求 `http://127.0.0.1:8080`，
+并可用 `--base-url` / `--api-key` 覆盖。
+
 配置默认从项目根目录的 `.env` 读取（进程环境变量优先）。`.env` 只放密钥等运行参数，
 模型路由全部在 `config.toml` 定义，密钥经 `key_env` 指定的环境变量注入（如 `AI_KEY_DS`）；
-一个 provider 都没配置时回退 `FakeLLM`，无需 API Key 即可跑通。
+一个 provider 都没配置时回退 `FakeLLM`，无需 API Key 即可跑通。仓库默认 `config.toml` 已配置 provider；
+若暂时没有模型密钥，可把 `ZCAISAGENT_CONFIG_FILE` 指向不含 `[model_providers.*]` 的 TOML 做离线演示（见
+[06 · 部署手册 §2.3](docs/06-deployment.md)）。
+
+#### SDK 速用
+
+```python
+import asyncio
+from zcaisagent.sdk import ZCAISClient
+
+
+async def main() -> None:
+    async with ZCAISClient("http://127.0.0.1:8080", api_key="dev-key") as client:
+        run = await client.create_run("一线城市住宿标准是多少？", level="L1")
+        print(run["status"], run["answer"])
+        print((await client.health())["status"])
+
+
+asyncio.run(main())
+```
+
+完整方法、SSE 与异常处理见 [08 · Python SDK](docs/08-sdk.md)。
 
 模型选择由「是否显式指定 `reasoning_effort`」决定：
 
@@ -241,6 +276,26 @@ uvicorn zcaisagent.api.app:app --reload --port 8080
 
 ***
 
+## Studio 与运营
+
+Studio 由 FastAPI 同源托管（`src/zcaisagent/api/static/studio.html`），无需单独启动前端：
+
+- **数据源**：列出每个检索源的名称、类型、优先级、启用状态与健康状态，可即时启用/停用；启停只对当前进程生效，重启后回到配置文件状态。
+- **轨迹**：按状态筛选 Run，查看节点级轨迹、耗时、tokens、成本、证据与最终答案。
+- **评估**：展示最新评估报告、门禁阈值与通过/失败项，并可按 `tag` / `limit` 触发一次评估。
+- **配置**：展示模型、检索、安全、工具、记忆、缓存、调度、事件的脱敏快照；**只读**，修改需改配置文件并重启。
+
+所有 `/v1/admin/*` 接口（含 Studio 使用的数据）都需要 API Key 与 `admin:read` scope，写操作需要 `admin:write`；
+本地默认 `dev-key` 带 admin scope，生产请在 `[security]` 中收窄角色权限。Studio 的 Key 保存在浏览器 `sessionStorage`。
+
+评估页读取 `data/eval/latest.json`（由 `zcaisagent eval --out` 产出）；文件缺失时回退 `data/eval/baselines/`
+下最新的报告，二者都没有则显示不可用，不影响其他页面。
+
+部署形态、可选依赖回退与安全清单见 [06 · 部署手册](docs/06-deployment.md)；
+健康检查、故障处置与备份恢复见 [07 · 运维手册](docs/07-runbook.md)。
+
+***
+
 ## 术语表
 
 | 术语               | 含义                                                              |
@@ -284,4 +339,4 @@ uvicorn zcaisagent.api.app:app --reload --port 8080
 | 产品层方案    | ✅ 已完成并确认（Q1-Q6 基线）                      |
 | 技术架构方案   | ✅ 完成                                    |
 | 工程落地计划   | ✅ 完成                                    |
-| 代码实现     | ✅ M0 骨架 + Agentic RAG 检索链路 + M1 欠账收口（226 项测试通过） |
+| 代码实现     | ✅ M0 骨架 + Agentic RAG 检索链路 + M2 工具/记忆/治理 + M3 产品化（Studio、压测、故障演练、SDK、部署/运维文档，400+ 项测试） |

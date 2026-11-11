@@ -4,20 +4,29 @@ services:
     ports:
       - "8080:8080"
     environment:
-      ZCAISAGENT_LLM_PROVIDER: fake
-      ZCAISAGENT_MODEL: gpt-4.1-mini
+      # 镜像不包含 config.toml，未配置任何 provider 时自动使用 FakeLLM。
       ZCAISAGENT_SEED_DIR: /app/data/seed
       ZCAISAGENT_DATA_DIR: /app/.zcaisagent
       ZCAISAGENT_API_KEY: dev-key
-      ZCAISAGENT_DATABASE_ENABLED: "true"
-      ZCAISAGENT_DATABASE_URL: postgresql://zcaisagent:zcaisagent@postgres:5432/zcaisagent
+      # 缓存默认进程内；启用 Redis 需要挂载含 [cache] enabled=true / backend="redis"
+      # 的 config.toml，并把本值改为 redis、设置 ZCAISAGENT_REDIS_URL，再用 --profile infra。
+      ZCAISAGENT_CACHE_BACKEND: memory
+      # Postgres 默认关闭；启用：ZCAISAGENT_DATABASE_ENABLED=true 且
+      # docker compose --profile infra up。DSN 中的账号密码仅为本地开发默认值。
+      ZCAISAGENT_DATABASE_ENABLED: "${ZCAISAGENT_DATABASE_ENABLED:-false}"
+      ZCAISAGENT_DATABASE_URL: "${ZCAISAGENT_DATABASE_URL:-postgresql://zcaisagent:zcaisagent@postgres:5432/zcaisagent}"
     volumes:
       - zcaisagent_data:/app/.zcaisagent
-    depends_on:
-      - postgres
-      - redis
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sys,urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3).status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
+  # 可选依赖：默认不启动；使用 --profile infra 追加。
   postgres:
+    profiles: ["infra"]
     image: pgvector/pgvector:pg16
     environment:
       POSTGRES_USER: zcaisagent
@@ -30,6 +39,7 @@ services:
       - zcaisagent_pg:/var/lib/postgresql/data
 
   redis:
+    profiles: ["infra"]
     image: redis:7-alpine
     ports:
       - "6379:6379"

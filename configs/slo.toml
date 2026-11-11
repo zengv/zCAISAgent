@@ -1,0 +1,16 @@
+# 压测 SLO 阈值。
+# 当前口径面向 FakeLLM / 本地模型（无外部网络调用），真实云模型需在目标环境
+# 复测后更新这些阈值，避免沿用本地数据误判。
+# p95_ms：P95 延迟上限（毫秒）；max_error_rate：HTTP 失败与异常请求占比上限。
+
+[default]
+p95_ms = 3000
+max_error_rate = 0.01
+
+[concurrency.20]
+p95_ms = 3000
+max_error_rate = 0.01
+
+[concurrency.50]
+p95_ms = 6000
+max_error_rate = 0.02

@@ -53,6 +53,34 @@ def filter_cases(
     return filtered
 
 
+def failed_samples(
+    cases: list[dict[str, Any]], results: list[dict[str, Any]], limit: int = 50
+) -> list[dict[str, Any]]:
+    """失败样本清单：答错的可答题与执行失败项，供报告与 Studio 定位。"""
+    samples: list[dict[str, Any]] = []
+    for case, result in zip(cases, results, strict=False):
+        failed = result.get("status") == "failed" or (
+            bool(result.get("answerable", True)) and not result.get("correct", False)
+        )
+        if not failed:
+            continue
+        samples.append(
+            {
+                "id": case.get("id"),
+                "question": str(case.get("question") or "")[:160],
+                "status": result.get("status"),
+                "correct": result.get("correct"),
+                "answerable": result.get("answerable"),
+                "steps": result.get("steps"),
+                "citation_support": result.get("citation_support"),
+                "faithfulness": result.get("faithfulness"),
+            }
+        )
+        if len(samples) >= limit:
+            break
+    return samples
+
+
 async def run_dataset(
     container: Container, cases: list[dict[str, Any]]
 ) -> dict[str, Any]:
@@ -79,4 +107,6 @@ async def run_dataset(
                 actions=_action_count(container.trace, state.run_id),
             )
         )
-    return summarize(results)
+    report = summarize(results)
+    report["failed_samples"] = failed_samples(cases, results)
+    return report
