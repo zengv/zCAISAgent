@@ -44,6 +44,8 @@ class FakeLLM:
         user_text = next(
             (m.content for m in reversed(req.messages) if m.role == "user"), ""
         )
+        if req.purpose in {"verify", "judge", "guardrail"}:
+            return self._judge_response(req.purpose, user_text)
         evidence = _EVIDENCE.findall(user_text)
         if evidence:
             claims = []
@@ -60,6 +62,35 @@ class FakeLLM:
             text=json.dumps(payload, ensure_ascii=False),
             tokens_in=len(user_text),
             tokens_out=len(json.dumps(payload, ensure_ascii=False)),
+            cost_usd=0.0,
+            model="fake",
+        )
+
+    def _judge_response(self, purpose: str, user_text: str) -> LLMResponse:
+        lowered = user_text.lower()
+        if purpose == "guardrail":
+            blocked = any(
+                marker in lowered
+                for marker in (
+                    "忽略以上指令",
+                    "ignore previous",
+                    "越权",
+                    "删除知识库",
+                    "管理员密码",
+                    "跳过审批",
+                )
+            )
+            payload = {
+                "allowed": not blocked,
+                "category": None if not blocked else "injection",
+            }
+        else:
+            payload = {"entailment": 0.9 if "<evidence" in lowered else 0.0}
+        text = json.dumps(payload, ensure_ascii=False)
+        return LLMResponse(
+            text=text,
+            tokens_in=len(user_text),
+            tokens_out=len(text),
             cost_usd=0.0,
             model="fake",
         )

@@ -1,6 +1,12 @@
 from zcaisagent.ports.cache import CachePort, CacheStats
 from zcaisagent.ports.checkpoint import CheckpointPort
-from zcaisagent.ports.evaluation import EvaluatorPort, EvidenceGrade, Sufficiency
+from zcaisagent.ports.evaluation import (
+    AnswerVerifierPort,
+    EntailmentResult,
+    EvaluatorPort,
+    EvidenceGrade,
+    Sufficiency,
+)
 from zcaisagent.ports.events import EventEnvelope, EventSinkPort
 from zcaisagent.ports.llm import LLMDelta, LLMPort, LLMRequest, LLMResponse
 from zcaisagent.ports.memory import (
@@ -40,6 +46,7 @@ from zcaisagent.ports.trace import TracePort
 
 __all__ = [
     "ApprovalRequest",
+    "AnswerVerifierPort",
     "AuditEvent",
     "AuditPort",
     "AuthContext",
@@ -47,6 +54,7 @@ __all__ = [
     "CacheStats",
     "CheckpointPort",
     "Decision",
+    "EntailmentResult",
     "EvaluatorPort",
     "EventEnvelope",
     "EventSinkPort",

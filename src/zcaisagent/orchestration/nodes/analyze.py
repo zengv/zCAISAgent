@@ -6,6 +6,7 @@ from zcaisagent.domain.enums import AutonomyLevel, MemoryKind
 from zcaisagent.domain.models import Message, RunState
 from zcaisagent.domain.patch import StatePatch
 from zcaisagent.orchestration.runtime import RunContext
+from zcaisagent.orchestration.telemetry import emit
 from zcaisagent.ports.llm import LLMRequest
 from zcaisagent.ports.memory import MemoryQuery
 
@@ -195,6 +196,17 @@ async def _model_analysis(
         response = await ctx.llm.complete(request)
     except Exception:  # noqa: BLE001 - analysis must never fail a run
         return None, None
+    await emit(
+        ctx,
+        state,
+        "llm.called",
+        node="analyze",
+        data={
+            "purpose": "analyze",
+            "tokens": response.tokens_in + response.tokens_out,
+            "cost_usd": round(response.cost_usd, 6),
+        },
+    )
     match = re.search(r"\{.*\}", response.text, re.S)
     if not match:
         return None, None

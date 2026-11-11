@@ -224,6 +224,54 @@ class SecretConfig:
     vault_path: str = "zcaisagent"
 
 
+@dataclass(frozen=True)
+class ObservabilityConfig:
+    """可观测配置：细粒度事件默认开启，OTel 导出默认关闭。"""
+
+    emit_events: bool = True
+    otel_enabled: bool = False
+    otel_endpoint: str = ""
+    service_name: str = "zcaisagent"
+    sample_ratio: float = 1.0
+
+
+@dataclass(frozen=True)
+class GuardrailConfig:
+    """护栏模型层配置：默认关闭，仅用规则；失败按 fail_open 放行。"""
+
+    model_enabled: bool = False
+    purpose: str = "guardrail"
+    fail_open: bool = True
+
+
+@dataclass(frozen=True)
+class EvaluatorConfig:
+    """语义校验（NLI judge）配置：默认关闭，回退词面校验。"""
+
+    semantic_verify_enabled: bool = False
+    purpose: str = "verify"
+    min_entailment: float = 0.8
+    fail_open: bool = True
+
+
+@dataclass(frozen=True)
+class SkillsConfig:
+    """技能目录扫描配置：默认从 skills/ 加载。"""
+
+    enabled: bool = True
+    dir: Path = field(default_factory=lambda: Path("skills"))
+
+
+@dataclass(frozen=True)
+class CheckpointConfig:
+    """检查点持久化配置：默认 JSONL + 压缩索引，可选 Postgres。"""
+
+    backend: Literal["jsonl", "postgres"] = "jsonl"
+    compact_enabled: bool = True
+    compact_threshold_lines: int = 20
+    compact_keep: int = 1
+
+
 def _env_flag(name: str, default: bool) -> bool:
     value = os.getenv(name)
     if not value:
@@ -340,6 +388,12 @@ class Settings:
     secret: SecretConfig | None = None
     # Studio 看板读取的评估报告 / 门禁 / 基线路径。
     studio: StudioConfig = field(default_factory=StudioConfig)
+    # 可观测 / 语义校验 / 技能目录 / 检查点。
+    observability: ObservabilityConfig = field(default_factory=ObservabilityConfig)
+    guardrail: GuardrailConfig = field(default_factory=GuardrailConfig)
+    evaluator: EvaluatorConfig = field(default_factory=EvaluatorConfig)
+    skills: SkillsConfig = field(default_factory=SkillsConfig)
+    checkpoint: CheckpointConfig = field(default_factory=CheckpointConfig)
 
     # —— 运行参数 ——
     api_key: str = "dev-key"
@@ -616,6 +670,100 @@ class Settings:
             ),
         )
 
+        raw_observability = cfg.get("observability", {}) or {}
+        observability = ObservabilityConfig(
+            emit_events=_env_flag(
+                f"{ENV_PREFIX}OBS_EMIT_EVENTS",
+                bool(raw_observability.get("emit_events", True)),
+            ),
+            otel_enabled=_env_flag(
+                f"{ENV_PREFIX}OTEL_ENABLED",
+                bool(raw_observability.get("otel_enabled", False)),
+            ),
+            otel_endpoint=env.get(
+                f"{ENV_PREFIX}OTEL_ENDPOINT",
+                str(raw_observability.get("otel_endpoint", "")),
+            ),
+            service_name=env.get(
+                f"{ENV_PREFIX}OTEL_SERVICE",
+                str(raw_observability.get("service_name", "zcaisagent")),
+            ),
+            sample_ratio=float(
+                env.get(
+                    f"{ENV_PREFIX}OTEL_SAMPLE_RATIO",
+                    raw_observability.get("sample_ratio", 1.0),
+                )
+            ),
+        )
+
+        raw_guardrail = cfg.get("guardrail", {}) or {}
+        guardrail = GuardrailConfig(
+            model_enabled=_env_flag(
+                f"{ENV_PREFIX}GUARDRAIL_MODEL_ENABLED",
+                bool(raw_guardrail.get("model_enabled", False)),
+            ),
+            purpose=str(raw_guardrail.get("purpose", "guardrail")),
+            fail_open=_env_flag(
+                f"{ENV_PREFIX}GUARDRAIL_FAIL_OPEN",
+                bool(raw_guardrail.get("fail_open", True)),
+            ),
+        )
+
+        raw_evaluator = cfg.get("evaluator", {}) or {}
+        evaluator = EvaluatorConfig(
+            semantic_verify_enabled=_env_flag(
+                f"{ENV_PREFIX}SEMANTIC_VERIFY_ENABLED",
+                bool(raw_evaluator.get("semantic_verify_enabled", False)),
+            ),
+            purpose=str(raw_evaluator.get("purpose", "verify")),
+            min_entailment=float(
+                env.get(
+                    f"{ENV_PREFIX}EVALUATOR_MIN_ENTAILMENT",
+                    raw_evaluator.get("min_entailment", 0.8),
+                )
+            ),
+            fail_open=_env_flag(
+                f"{ENV_PREFIX}EVALUATOR_FAIL_OPEN",
+                bool(raw_evaluator.get("fail_open", True)),
+            ),
+        )
+
+        raw_skills = cfg.get("skills", {}) or {}
+        skills = SkillsConfig(
+            enabled=_env_flag(
+                f"{ENV_PREFIX}SKILLS_ENABLED",
+                bool(raw_skills.get("enabled", True)),
+            ),
+            dir=_env_path(
+                env, f"{ENV_PREFIX}SKILLS_DIR", str(raw_skills.get("dir", "skills"))
+            ),
+        )
+
+        raw_checkpoint = cfg.get("checkpoint", {}) or {}
+        ckpt_backend = env.get(
+            f"{ENV_PREFIX}CHECKPOINT_BACKEND",
+            str(raw_checkpoint.get("backend", "jsonl")),
+        )
+        checkpoint = CheckpointConfig(
+            backend="postgres" if ckpt_backend == "postgres" else "jsonl",
+            compact_enabled=_env_flag(
+                f"{ENV_PREFIX}CHECKPOINT_COMPACT",
+                bool(raw_checkpoint.get("compact_enabled", True)),
+            ),
+            compact_threshold_lines=int(
+                env.get(
+                    f"{ENV_PREFIX}CHECKPOINT_THRESHOLD",
+                    raw_checkpoint.get("compact_threshold_lines", 20),
+                )
+            ),
+            compact_keep=int(
+                env.get(
+                    f"{ENV_PREFIX}CHECKPOINT_KEEP",
+                    raw_checkpoint.get("compact_keep", 1),
+                )
+            ),
+        )
+
         raw_secret = cfg.get("secret")
         secret: SecretConfig | None = None
         if raw_secret is not None:
@@ -654,6 +802,11 @@ class Settings:
             events=events,
             secret=secret,
             studio=studio,
+            observability=observability,
+            guardrail=guardrail,
+            evaluator=evaluator,
+            skills=skills,
+            checkpoint=checkpoint,
             llm_provider="openai" if providers else "fake",
             api_key=env.get(f"{ENV_PREFIX}API_KEY", "dev-key"),
             default_tenant=env.get(f"{ENV_PREFIX}DEFAULT_TENANT", "demo"),

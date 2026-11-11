@@ -8,6 +8,7 @@ from zcaisagent.domain.models import PendingApproval, Plan, RunState, RunStatus
 from zcaisagent.domain.patch import StatePatch
 from zcaisagent.orchestration.actions.registry import ActionSpace, build_default_action_space
 from zcaisagent.orchestration.runtime import RunContext
+from zcaisagent.orchestration.telemetry import emit
 from zcaisagent.ports.retrieval import RetrieveRequest
 
 # 计划步骤语义 → 动作空间条目名称。
@@ -142,12 +143,25 @@ async def _tool_call(
     }
     if approval is not None:
         action["approval_id"] = approval.id
+    await emit(
+        ctx,
+        state,
+        "tool.called",
+        node="act",
+        data={
+            "tool": name,
+            "risk": risk_level,
+            "status": status,
+            "latency_ms": result.latency_ms,
+        },
+    )
     return StatePatch(
         plan=_mark(plan, pending.id, "done" if evidence else "failed"),
         analysis={"action": action},
         clear_pending_approval=approval is not None,
         append_notes=[f"action:{pending.id}:tool_call:{len(items)}"],
         append_invocations=[to_invocation(result, args, risk_level)],
+        incr_actions=1,
     )
 
 
@@ -197,9 +211,21 @@ async def act_node(state: RunState, ctx: RunContext) -> StatePatch:
         "status": "ok" if observation["items"] else "empty",
         **observation,
     }
+    await emit(
+        ctx,
+        state,
+        "action.performed",
+        node="act",
+        data={
+            "kind": pending.kind,
+            "query": query,
+            "hits": len(observation["items"]),
+        },
+    )
     return StatePatch(
         plan=_mark(plan, pending.id, "done"),
         analysis={"action": action},
+        incr_actions=1,
         append_notes=[
             f"action:{pending.id}:{pending.kind}:{len(observation['items'])}"
         ],

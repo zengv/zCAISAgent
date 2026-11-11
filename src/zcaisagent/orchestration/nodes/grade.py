@@ -2,13 +2,21 @@ from zcaisagent.domain.models import RunState
 from zcaisagent.domain.patch import StatePatch
 from zcaisagent.orchestration.policies.evidence import grade_evidence, judge_sufficiency
 from zcaisagent.orchestration.runtime import RunContext
+from zcaisagent.orchestration.telemetry import emit
 
 
 async def grade_node(state: RunState, ctx: RunContext) -> StatePatch:
     # retrieve 节点的 rerank 分存在时优先作为相关性；否则走词法相关性逻辑。
     rerank_scores = state.analysis.get("rerank_scores") or None
-    grades = grade_evidence(state.goal, state.evidence, rerank_scores=rerank_scores)
-    sufficiency = judge_sufficiency(state.goal, state.evidence, grades)
+    evaluator = getattr(ctx, "evaluator", None)
+    if evaluator is not None:
+        grades = evaluator.grade_evidence(
+            state.goal, state.evidence, rerank_scores=rerank_scores
+        )
+        sufficiency = evaluator.judge_sufficiency(state.goal, state.evidence, grades)
+    else:
+        grades = grade_evidence(state.goal, state.evidence, rerank_scores=rerank_scores)
+        sufficiency = judge_sufficiency(state.goal, state.evidence, grades)
     by_id = {grade.evidence_id: grade for grade in grades}
     updated = [
         item.model_copy(
@@ -36,6 +44,18 @@ async def grade_node(state: RunState, ctx: RunContext) -> StatePatch:
     ]
     if no_progress:
         notes.append(f"no_progress:evidence={len(updated)}<=baseline={baseline}")
+    await emit(
+        ctx,
+        state,
+        "evidence.graded",
+        node="grade",
+        data={
+            "evidence_ids": [item.id for item in updated],
+            "kept": kept,
+            "sufficiency": sufficiency.decision,
+            "coverage": sufficiency.coverage,
+        },
+    )
     return StatePatch(
         replace_evidence=updated,
         analysis={

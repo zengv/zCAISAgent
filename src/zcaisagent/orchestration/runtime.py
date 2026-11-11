@@ -10,8 +10,10 @@ from zcaisagent.domain.patch import StatePatch
 from zcaisagent.orchestration.graph import GraphSpec
 from zcaisagent.orchestration.policies.budget import BudgetPolicy
 from zcaisagent.orchestration.reducers import apply_patch
+from zcaisagent.orchestration.telemetry import emit
 from zcaisagent.ports.cache import CachePort
 from zcaisagent.ports.checkpoint import CheckpointPort
+from zcaisagent.ports.evaluation import AnswerVerifierPort, EvaluatorPort
 from zcaisagent.ports.events import EventSinkPort
 from zcaisagent.ports.health import HealthPort, HealthStatus
 from zcaisagent.ports.llm import LLMPort
@@ -32,6 +34,10 @@ class RunContext:
     config: Any = None
     sources: RetrieverPoolPort | None = None
     reranker: Any = None
+    # 证据评分/充分性策略；None 时 grade 节点回退到本地策略函数。
+    evaluator: EvaluatorPort | None = None
+    # 答案级语义校验（NLI judge）；None 时 verify 节点使用词面近似校验。
+    verifier: AnswerVerifierPort | None = None
     health: HealthPort | None = None
     guardrail: GuardrailPort | None = None
     audit: AuditPort | None = None
@@ -53,9 +59,16 @@ class Runtime:
     async def execute(
         self, graph: GraphSpec, state: RunState, ctx: RunContext
     ) -> RunState:
+        await emit(
+            ctx,
+            state,
+            "run.started",
+            data={"level": state.level.value, "goal_len": len(state.goal)},
+        )
         while state.status == RunStatus.RUNNING:
             budget_reason = BudgetPolicy.check(state)
             if budget_reason is not None:
+                await emit(ctx, state, "budget.exceeded", data={"reason": budget_reason})
                 state = apply_patch(
                     state,
                     StatePatch(
@@ -89,6 +102,7 @@ class Runtime:
             before_cost = state.budget.used_cost_usd
             before_evidence = len(state.evidence)
             ctx.trace.start_step(state.step, node_name, state.run_id)
+            await emit(ctx, state, "step.started", node=node_name)
             if ctx.emit is not None:
                 await ctx.emit(
                     "stage",
@@ -144,6 +158,16 @@ class Runtime:
                 state.status == RunStatus.AWAITING_USER
                 and state.pending_approval is not None
             ):
+                await emit(
+                    ctx,
+                    state,
+                    "approval.requested",
+                    node=node_name,
+                    data={
+                        "approval_id": state.pending_approval.id,
+                        "tool": state.pending_approval.tool,
+                    },
+                )
                 if ctx.emit is not None:
                     await ctx.emit(
                         "approval_required",
@@ -159,6 +183,18 @@ class Runtime:
                 break
 
         # finished_ts 必须在最后一次落盘前赋值，否则 checkpoint 里永远是 0。
+        await emit(
+            ctx,
+            state,
+            "run.finished",
+            data={
+                "status": state.status.value,
+                "steps": state.step,
+                "actions": state.budget.used_actions,
+                "tokens": state.budget.used_tokens,
+                "cost_usd": round(state.budget.used_cost_usd, 6),
+            },
+        )
         state.finished_ts = time.time()
         await ctx.checkpoint.save(state)
         return state
@@ -176,6 +212,13 @@ class Runtime:
         }
         if not decided and not state.resume_node:
             return state
+        if approval is not None:
+            await emit(
+                ctx,
+                state,
+                "approval.resolved",
+                data={"approval_id": approval.id, "status": approval.status.value},
+            )
         resumed = state.model_copy(update={"status": RunStatus.RUNNING})
         return await self.execute(graph, resumed, ctx)
 

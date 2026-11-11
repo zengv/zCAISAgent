@@ -29,12 +29,14 @@ class InMemorySkillRegistry:
         granted = set(scopes)
         for skill in self._skills.values():
             hits = [word for word in skill.trigger_keywords if word in goal]
-            if not hits:
+            tag_hits = [tag for tag in skill.tags if tag and tag in goal]
+            if not hits and not tag_hits:
                 continue
             missing = [scope for scope in skill.required_scopes if scope not in granted]
             if missing:
                 return SkillDecision(None, "permission_denied:" + ",".join(missing))
-            return SkillDecision(skill, f"keyword:{hits[0]}")
+            reason = f"keyword:{hits[0]}" if hits else f"tag:{tag_hits[0]}"
+            return SkillDecision(skill, reason)
         return SkillDecision(None, "no_match")
 
 

@@ -232,6 +232,8 @@ zCAISAgent/
 
 ### 2.1 允许的依赖方向
 
+> **实现现状（2026-11-11 复核）**：实际分层与上图略有出入——`orchestration` 依赖 `capabilities`（节点直接 import `capabilities.retrieval.*` / `skills.registry` / `tools.gateway`）；`evaluation` 依赖 `orchestration`（复用 `build_default_graph` / `Runtime`）与 `capabilities`；`governance` 依赖 `ports`（`guards.py` 用 `ports.security`）。完整层序见 §2.2 的 `.importlinter`。
+
 ```mermaid
 flowchart LR
     API["api"] --> ORCH["orchestration"]
@@ -276,9 +278,13 @@ root_package = zcaisagent
 [importlinter:contract:layered]
 name = Layered architecture
 type = layers
+# 自上而下（上层可依赖下层）；实测 `python -m importlinter.cli lint` 通过
 layers =
     zcaisagent.api
-    zcaisagent.orchestration | zcaisagent.capabilities | zcaisagent.evaluation
+    zcaisagent.evaluation
+    zcaisagent.orchestration
+    zcaisagent.capabilities
+    zcaisagent.governance
     zcaisagent.ports
     zcaisagent.domain
 ```
@@ -466,7 +472,7 @@ layers =
 | 4 | 证据评分 + 充分性判断 | 四维评分 + coverage | 与人工一致性 ≥ 0.8 |
 | 5 | 证据约束生成 + claim 拆解 + 引用绑定 | 答案卡片数据 | Citation Support ≥ 0.85 |
 | 6 | claim 级校验 + 修复 + 拒答 | Verdict + repair | 无依据断言率 < 5% |
-| 7 | 预算/终止/无进展检测 | 无超预算、无死循环 | 压测 100 并发无失控；节点步数上限（预算）L1=16 / L2=22 / L3=32；效率指标按有效动作次数（PRD FR-AI-08，≤2/5/12） |
+| 7 | 预算/终止/无进展检测 | 无超预算、无死循环 | 压测 100 并发无失控；节点步数上限（预算）L1=16 / L2=22 / L3=32；有效动作次数硬上限 max_actions=1/3/8/15 且效率目标均值 ≤2/5/12（PRD FR-AI-08） |
 | 8 | 黄金集 100 条 + 评估 runner | 一键报告 | 7.2 MVP 指标达标 |
 | 9 | 前端最小版：对话 + 证据面板 + 轨迹抽屉 | 可演示 | 人工走查 |
 | 10 | `SkillRegistryPort` 骨架 + 1 个内置 Skill | 一个技能包可加载 | 匹配可解释、无提权 |

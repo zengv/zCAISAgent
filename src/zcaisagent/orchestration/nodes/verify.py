@@ -9,6 +9,7 @@ from zcaisagent.domain.models import Citation, Claim, RunState, Verdict
 from zcaisagent.domain.patch import StatePatch
 from zcaisagent.domain.text import content_tokens, numbers_in, overlap_ratio
 from zcaisagent.orchestration.runtime import RunContext
+from zcaisagent.orchestration.telemetry import emit
 
 _MIN_SUPPORT = 0.55
 _MIN_PASS = 0.6
@@ -241,6 +242,15 @@ async def verify_node(state: RunState, ctx: RunContext) -> StatePatch:
     supported = 0
     invalid_citation = False
     number_conflict = False
+    verifier = getattr(ctx, "verifier", None)
+    eval_cfg = getattr(getattr(ctx, "config", None), "evaluator", None)
+    semantic_on = bool(
+        eval_cfg is not None
+        and getattr(eval_cfg, "semantic_verify_enabled", False)
+        and verifier is not None
+    )
+    budget = state.budget
+    budget_changed = False
     for claim in state.answer.claims:
         valid = [eid for eid in claim.evidence_ids if eid in evidence_by_id]
         if any(eid not in evidence_by_id for eid in claim.evidence_ids):
@@ -262,12 +272,52 @@ async def verify_node(state: RunState, ctx: RunContext) -> StatePatch:
             state.goal,
             evidence_numbers,
         )
-        if ratio >= _MIN_SUPPORT and numbers_ok:
+        semantic_pass = True
+        semantic_note = ""
+        if semantic_on:
+            try:
+                entail = await verifier.entail(
+                    claim.text, [evidence_by_id[eid].content for eid in valid]
+                )
+            except Exception:  # noqa: BLE001 - 判官异常回退词面
+                entail = None
+            if entail is not None and entail.response is not None:
+                resp = entail.response
+                budget = budget.model_copy(
+                    update={
+                        "used_llm_calls": budget.used_llm_calls + 1,
+                        "used_tokens": budget.used_tokens
+                        + resp.tokens_in
+                        + resp.tokens_out,
+                        "used_tokens_in": budget.used_tokens_in + resp.tokens_in,
+                        "used_tokens_out": budget.used_tokens_out + resp.tokens_out,
+                        "used_cached_tokens": budget.used_cached_tokens
+                        + resp.cached_tokens,
+                        "used_cost_usd": budget.used_cost_usd + resp.cost_usd,
+                    }
+                )
+                budget_changed = True
+            if entail is None or entail.score is None:
+                if getattr(eval_cfg, "fail_open", True):
+                    semantic_pass = ratio >= _MIN_SUPPORT
+                else:
+                    semantic_pass = False
+                semantic_note = ";semantic=unavailable"
+            else:
+                semantic_pass = entail.score >= float(
+                    getattr(eval_cfg, "min_entailment", 0.8)
+                )
+                semantic_note = f";semantic={entail.score:.2f}"
+        if semantic_on:
+            ok = semantic_pass and numbers_ok
+        else:
+            ok = ratio >= _MIN_SUPPORT and numbers_ok
+        if ok:
             support = Support.SUPPORTED
             supported += 1
         else:
             support = Support.PARTIAL
-        note = f"overlap={ratio:.2f}"
+        note = f"overlap={ratio:.2f}" + semantic_note
         if not numbers_ok:
             # 只有文本本身有支撑（ratio 达标）、仅数字对不上时才算"数值不一致"；
             # 文本覆盖率不足时属于证据不足，避免把 no_answer 题误归因为数值冲突。
@@ -355,9 +405,22 @@ async def verify_node(state: RunState, ctx: RunContext) -> StatePatch:
             "limitations": limitations,
         }
     )
+    await emit(
+        ctx,
+        state,
+        "answer.verified",
+        node="verify",
+        data={
+            "passed": passed,
+            "faithfulness": round(faithfulness, 4),
+            "citation_support": round(citation_support, 4),
+            "issues": issues,
+        },
+    )
     return StatePatch(
         answer=answer,
         verdict=verdict,
+        budget=budget if budget_changed else None,
         append_notes=[
             f"verified:{'pass' if passed else 'fail'}:" + ",".join(issues),
             f"faithfulness:{faithfulness:.2f}",

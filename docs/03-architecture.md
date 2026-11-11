@@ -152,6 +152,8 @@ flowchart LR
 
 ### 3.1 核心抽象
 
+> **实现现状**：`orchestration/runtime.py` 的 `RunContext` 为**扁平字段**（`llm/retriever/sources/reranker/checkpoint/trace/auth/config/guardrail/audit/skills/tools/memory/cache/events/evaluator/verifier/...`），**没有** `ports` 聚合对象与 `policies` 字段；预算/终止由 `BudgetPolicy` 静态方法在运行时调用。`EvaluatorPort` 有默认实现 `RuleEvaluator` 并由容器注入 `RunContext.evaluator`；`evaluator.semantic_verify_enabled` 开启时注入 `AnswerVerifierPort`（LLM NLI judge）到 `RunContext.verifier`，答案级校验由 `verify` 节点承担。
+
 ```
 GraphSpec  = { nodes, edges, entry, terminals: dict[node, RunStatus] }
 Node       = (RunState, RunContext) -> StatePatch
@@ -227,7 +229,7 @@ async def execute(graph: GraphSpec, state: RunState, ctx: RunContext) -> RunStat
 
 | 能力 | 实现 | 说明 |
 |---|---|---|
-| **Checkpoint** | 每步 `save(run_id, state)`；Postgres JSONB | 崩溃恢复、回放、审计 |
+| **Checkpoint** | 每步 `save(run_id, state)`；现为 JSONL（`JsonlCheckpoint`，压缩+索引），可选 Postgres（`[checkpoint] backend`） | 崩溃恢复、回放、审计 |
 | **Interrupt / Resume** | 状态置 `AWAITING_USER`，API 收到输入后 `resume(run_id, patch)` | HITL 审批、澄清 |
 | **重试** | 仅对幂等端口（LLM/检索）自动重试；工具按 `idempotent` 标记 | 避免重复副作用 |
 | **并发分支** | `asyncio.gather(..., return_exceptions=True)` 用于多源检索 | 部分失败不拖垮全局 |
@@ -237,6 +239,8 @@ async def execute(graph: GraphSpec, state: RunState, ctx: RunContext) -> RunStat
 | **回放** | 从 checkpoint 重建状态，禁用真实 LLM（录制/回放） | 调试与回归 |
 
 ### 3.4 内置图
+
+> **实现现状**：实际图为 `build_default_graph()`：`analyze→route→{abstain|direct_answer|retrieve|plan}`；`plan→act→observe→reflect→{act|grade}`；`retrieve→grade→{abstain|synthesize|repair}`；`synthesize→verify→{respond|abstain|repair}`；`repair→{retrieve|synthesize|respond(降级)|abstain}`。**无独立的 `rewrite`/`source_route`/`replan`/`clarify` 节点**：改写与选源在 `retrieve` 节点内部完成，重规划由 `repair` 承担，澄清未实现。下方 §3.4.1/§3.4.2 的 mermaid 为**目标态蓝图**，节点名以本节说明与 README「检索路由链路」图为准。
 
 #### 3.4.1 通用 Agent 循环（L2/L3）
 
@@ -530,10 +534,13 @@ class TracePort(Protocol):
 
 ```python
 # ports/evaluation.py
+@runtime_checkable
 class EvaluatorPort(Protocol):
-    async def grade_evidence(self, question: str, evidence: list["Evidence"]) -> "EvidenceGrade": ...
-    async def judge_sufficiency(self, question: str, evidence: list["Evidence"]) -> "Sufficiency": ...
-    async def verify_answer(self, answer: "Answer", evidence: list["Evidence"]) -> "Verdict": ...
+    def grade_evidence(self, question: str, evidence: list[Evidence],
+                       rerank_scores: dict[str, float] | None = None) -> list[EvidenceGrade]: ...
+    def judge_sufficiency(self, question: str, evidence: list[Evidence],
+                          grades: list[EvidenceGrade]) -> Sufficiency: ...
+    # 默认实现：orchestration/policies/evidence.py::RuleEvaluator；答案级校验在 verify 节点。
 ```
 
 ### 5.1 端口设计约束
@@ -549,6 +556,8 @@ class EvaluatorPort(Protocol):
 ---
 
 ## 6. 事件与追踪契约
+
+> **实现现状**：`RunEvent{type,run_id,step,node,span?,parent_id?,data,ts}`。`observability.emit_events`（默认开）时运行期发射 `run.started/step.started/step.finished/llm.called/retrieval.performed/rerank.performed/evidence.graded/tool.called/action.performed/answer.verified/run.finished` 等细粒度事件写入 trace（检索按源聚合，避免洪泛）；EventSink（Webhook）仍只投递高层生命周期事件。OTel 见 §15。
 
 ### 6.1 事件类型
 
@@ -751,6 +760,8 @@ class EvidenceGrade(BaseModel):
 
 ### 8.6 充分性判断（与 relevance 分离）
 
+> **实现现状**：`orchestration/policies/evidence.py::judge_sufficiency` 目前**仅用规则**：单问题建模，`coverage∈{0,1}`（至少一条 `final≥0.40` 且主题二元组命中即 1），`coverage<0.7` 判 `insufficient`。**未接入模型 judge**，也未感知子问题（待 FR-LOOP-01 落地）。decision 实际取值为 `sufficient/insufficient/conflict`（非本节的 `conflicting`）。
+
 ```python
 class Sufficiency(BaseModel):
     covered_sub_questions: list[str]
@@ -771,7 +782,7 @@ class Sufficiency(BaseModel):
 
 | 缓存 | 键 | 失效 |
 |---|---|---|
-| 检索结果缓存 | `hash(normalized_query + filters + source + top_k)` | TTL 10 min；文档版本变更时按前缀失效 |
+| 检索结果缓存 | `hash(normalized_query + filters + source + top_k)` | TTL 5 min（`cache.ttl_s=300`，默认关闭）；文档版本变更时按前缀失效 |
 | 语义缓存 | embedding 近邻（阈值 0.97） | 仅对 L1 高频问题开启；答案需带"缓存命中"标记 |
 | 重排缓存 | `hash(query + evidence_ids)` | 随证据变化 |
 | 文档解析缓存 | `doc_hash` | 文档变更 |
@@ -885,6 +896,8 @@ system + 最近 N 轮 + 记忆摘要 + 证据 + 当前问题 ≤ max_context_tok
 
 ### 11.1 路由（L0-L3）
 
+> **口径澄清（实现现状）**：本表「最大有效动作次数」现在是**运行时硬上限**（`Budget.max_actions`，取值同本表 1/3/8/15）同时用于评测；运行时与节点步数（`budget.py` 的 `max_steps`：L0=4 / L1=16 / L2=22 / L3=32）**并行强制**。PRD 的「平均有效动作 ≤2/5/12」是评测目标均值，与此硬上限不同。见 PRD FR-LOOP-05 / FR-AI-08。
+
 | 等级 | 触发条件（任一） | 动作 | 最大有效动作次数 | 典型延迟 |
 |---|---|---|---|---|
 | L0 | 闲聊/格式化/翻译；缓存直接命中 | 无 | 1 | < 3s |
@@ -898,6 +911,8 @@ system + 最近 N 轮 + 记忆摘要 + 证据 + 当前问题 ≤ max_context_tok
 
 ### 11.2 计划与重规划
 
+> **实现现状**：`plan` 节点用**确定性规则** `rewrite_queries` 拆子查询（`multi_*`/`decompose_*`，L2 上限 2、L3 上限 5），**未**用 LLM 结构化输出 `SubQuestion[]`；`Plan` 模型也只有 `steps`（无 `sub_questions`/依赖关系）。
+
 - **分解**：LLM 结构化输出 `SubQuestion[]`，数量上限 5；依赖关系显式；
 - **计划**：子问题 → `PlanStep`（retrieve/tool/reason/ask_user）；
 - **重规划触发**：充分性不足、工具失败、新信息出现、用户补充；
@@ -905,6 +920,8 @@ system + 最近 N 轮 + 记忆摘要 + 证据 + 当前问题 ≤ max_context_tok
 - **禁止**：无新证据的"空转重规划"（用 evidence hash 检测 no-progress）。
 
 ### 11.3 验证与修复
+
+> **实现现状**：默认用**词面近似**（`overlap_ratio≥0.55` + 数字/日期复算 + 词元覆盖率）。`evaluator.semantic_verify_enabled=true` 时改由 `LLMEntailmentJudge`（经 `LLMPort`，即 `ctx.verifier`）逐 claim 判定蕴含：`score≥min_entailment 且数字校验通过` 才算 SUPPORTED；默认关、失败按 `fail_open` 回退词面、judge 用量计入预算。
 
 ```python
 class Verdict(BaseModel):
@@ -938,6 +955,8 @@ class Verdict(BaseModel):
 ---
 
 ## 12. 模型网关
+
+> **实现现状**：模型层不使用 `small/medium/large` 档，而是 **provider 绑定 `reasoning_effort`（low/high/max）+ `[purpose_effort]` 映射 + 邻近等级双向降级**，配置在 `config.toml`，见 §17。下表 yaml 为早期档位示例（未落地）。
 
 | 能力 | 实现 |
 |---|---|
@@ -1067,6 +1086,8 @@ pytest tests/evals -m regression --baseline=baseline.json --fail-on-drop
 
 ### 15.1 Span 树
 
+> **实现现状**：默认 `JsonlTrace` 写节点级 step 与细粒度事件；`observability.otel_enabled=true` 且安装可选依赖 `.[otel]` 时使用 `OtelTrace`，把步骤映射为 span、事件作为 span event；初始化失败自动回退 JSONL（`health.trace` 标记）。
+
 ```
 run (run_id)
 ├── step analyze
@@ -1132,75 +1153,167 @@ services:
 
 ## 17. 配置契约
 
-```yaml
-# configs/agents/general_assistant.yaml
-agent:
-  name: general_assistant
-  schema_version: 1
-  autonomy:
-    default: L1
-    allow_user_override: true
-    l3_requires_explicit_request: true
+> **实现现状（2026-11-11 复核）**：真实配置为项目根 `config.toml`（TOML，`tomllib` 解析），由
+> `settings.py` 读取 `.env` + `config.toml`（环境变量优先）并注入。**早期设计中的
+> `configs/agents/general_assistant.yaml` 并未落地**，其结构（agent/budget/routing/verification/
+> observability 等）为历史蓝图，勿照抄。键位与默认值以下方 TOML 为准。
 
-  budget:
-    L0: { max_steps: 1, max_tokens: 4000,  max_cost_usd: 0.002, max_wall_time_s: 10 }
-    L1: { max_steps: 3, max_tokens: 20000, max_cost_usd: 0.008, max_wall_time_s: 20 }
-    L2: { max_steps: 8, max_tokens: 60000, max_cost_usd: 0.05,  max_wall_time_s: 40 }
-    L3: { max_steps: 15, max_tokens: 180000, max_cost_usd: 0.20, max_wall_time_s: 120 }
+```toml
+# —— 模型路由 ——
+model_provider = "deepseek"                 # 调用方未指定 reasoning_effort 时直接使用
+effort_levels = ["low", "high", "max"]      # 合法等级，同时决定就近双向降级顺序
 
-routing:
-  rules:
-    - if: "intent in ['chitchat','format','translate']"
-      level: L0
-    - if: "complexity == 'multi_hop' or intent in ['compare','analysis']"
-      level: L2
-    - if: "user_requested_deep_research"
-      level: L3
-  fallback_level: L1
-  confidence_threshold: 0.65
+[purpose_effort]                            # purpose → reasoning_effort；未命中走 default
+synthesize = "low"
+direct_answer = "low"
+analyze = "high"
+plan = "high"
+verify = "max"
+grade = "high"
+repair = "high"
+rerank = "low"
+default = "high"
 
-retrieval:
-  sources: [kb_vector, kb_fts, web_search, crm_api]
-  top_k: 30
-  rerank: { enabled: true, model: bge-reranker-v2-m3, top_n: 8 }
-  fusion: { method: rrf, k: 60 }
-  rewrite: { mode: auto, max_variants: 3, always_keep_original: true }
-  filters: { tenant: required, acl: required, time: optional }
-  sufficiency: { min_coverage: 0.7, max_replans: 2 }
+[embedding]                                 # 语义向量源与语义重排；不可用时自动降级
+enabled = true
+model = "qwen3.7-text-embedding-flash"
+base_url = "https://…/compatible-mode/v1"
+key_env = "AI_KEY_QW"
 
-verification:
-  require_citation: true
-  min_faithfulness: 0.8
-  max_repair_rounds: 2
-  on_fail: repair_retrieve_then_abstain
+[rerank]                                    # 专用 rerank 端点；不可用回退 embedding 余弦 → LLM 打分
+enabled = false
+model = "qwen3.7-text-rerank"
+base_url = "https://…/text-rerank"
+style = "dashscope"                         # dashscope | cohere
+key_env = "AI_KEY_QW"
 
-tools:
-  enabled: true
-  registry: [mcp://crm, openapi://ticket, sql://warehouse_readonly]
-  approval:
-    write: always
-    destructive: always
-  sandbox: { network: false, timeout_s: 30 }
+[retrieval]
+hyde_enabled = false
+hyde_max_tokens = 256
+parent_child_enabled = false
+parent_max_chars = 1800
+max_context_tokens = 6000
 
-memory:
-  working: { max_turns: 6, summary_threshold_tokens: 8000 }
-  episodic: { ttl_days: 90 }
-  semantic: { write_policy: explicit_or_review }
-  procedural: { enabled: true }
+[database]                                  # pgvector 持久化；连接失败回退内存
+enabled = false
+dsn_env = "ZCAISAGENT_DATABASE_URL"
+dimensions = 1024
 
-observability:
-  trace: otel
-  sample_rate: 1.0
-  log_prompt_content: false
+[model_providers.<id>]                      # 每个 provider 绑定一个 reasoning_effort 等级
+name = "显示名"
+model = "传给 /chat/completions 的模型名"
+base_url = "不带尾部斜杠"
+key_env = "AI_KEY_XX"
+context_window = 800000
+reasoning_effort = "high"                   # low | high | max
+cost_in = 0.28                              # $/1M tokens（示例，按账单修改）
+cost_out = 0.42
+
+[security]
+identity = "api_key"                        # api_key | oidc
+roles = { support = ["retrieve","tool:read","run:create"], admin = ["retrieve","tool:read","tool:write","run:create","run:approve","admin:read","admin:write"] }
+acl_tokens_by_role = { support = ["public"], admin = ["public","finance"] }
+[security.oidc]
+introspection_url = ""
+client_id = ""
+client_secret_env = "ZCAISAGENT_OIDC_CLIENT_SECRET"
+timeout_s = 5.0
+[security.opa]
+url = ""                                    # 为空使用内置 RBAC
+timeout_s = 3.0
+
+[tools]
+enable_kb_search = true
+enable_ticket = false
+mcp_servers = []
+openapi = {}
+sql = {}
+
+[memory]
+enabled = true
+distill_enabled = true
+max_items = 200
+ttl_s = 0
+
+[cache]                                     # 默认关闭；backend=redis 需可选依赖，失败回退 memory
+enabled = false
+ttl_s = 300
+max_entries = 1000
+llm_enabled = true
+backend = "memory"
+redis_url = "redis://localhost:6379/0"
+redis_timeout_s = 1.0
+
+[scheduler]                                 # 默认关闭；调度器只产生 Run
+enabled = false
+tick_s = 30
+
+[events]                                    # Webhook 事件投递；默认关闭
+enabled = false
+webhook_urls = []
+secret_env = "ZCAISAGENT_EVENT_SECRET"
+max_retries = 3
+dead_letter_path = ".zcaisagent/dead_letter.jsonl"
+
+[secret]                                    # env | vault
+provider = "env"
+vault_addr = ""
+vault_token_env = "VAULT_TOKEN"
+vault_mount = "secret"
+vault_path = "zcaisagent"
+
+[studio]                                    # Studio 看板数据源
+eval_report_path = "data/eval/latest.json"
+eval_gate_path = "configs/eval_gate.toml"
+baseline_dir = "data/eval/baselines"
+
+[observability]                             # 细粒度事件默认开；OTel 默认关（需 .[otel]）
+emit_events = true
+otel_enabled = false
+otel_endpoint = ""
+service_name = "zcaisagent"
+sample_ratio = 1.0
+
+[guardrail]                                 # 规则之外可选 LLM 分类；失败 fail_open
+model_enabled = false
+purpose = "guardrail"
+fail_open = true
+
+[evaluator]                                 # 语义 NLI judge；默认关，失败回退词面
+semantic_verify_enabled = false
+purpose = "verify"
+min_entailment = 0.8
+fail_open = true
+
+[skills]                                    # 启动扫描 skills/*/SKILL.md
+enabled = true
+dir = "skills"
+
+[checkpoint]                                # jsonl（压缩+索引）| postgres（需 [database]）
+backend = "jsonl"
+compact_enabled = true
+compact_threshold_lines = 20
+compact_keep = 1
 ```
 
-**配置校验**：启动时用 Pydantic 校验；未知字段报错；配置变更需通过"配置契约测试"。
+**预算口径**：运行时预算档位由 `orchestration/policies/budget.py` 定义。**节点步数**按节点执行次数计：
+`L0 max_steps=4 / L1=16 / L2=22 / L3=32`（墙钟 10/60/40/120s，token 4000/20000/60000/180000）。
+**有效动作次数**（retrieve/tool_call 等，每执行一次计 1）另由 `Budget.max_actions` 作为**运行时硬上限**：
+`L0/L1/L2/L3 = 1/3/8/15`，与节点步数并行强制；PRD 的「平均有效动作 ≤2/5/12」是评测目标均值
+（详见 PRD FR-LOOP-05 / FR-AI-08）。
 
-> 注意：`max_wall_time_s` 是**硬预算上限**（含重试与回退），不是 SLO。SLO 目标见 [02-product.md §7.2](02-product.md)，预算通常设为 SLO 的 1.5~2 倍，给重试留余量。
+**配置校验**：未知/缺失键按数据类默认值兜底；一个 provider 都未配置时回退 `FakeLLM`，无需 API Key
+即可跑通。
 
 ---
 
 ## 18. 扩展接口矩阵与预留契约（MCP / Skill / Cron / Security）
+
+> **2026-11-11 实现现状（§18.2–§18.6）**：
+> - **Skill（§18.2）**：实现为 `domain.Skill` 扁平模型 + `skills/*/SKILL.md` 目录加载（零依赖 frontmatter 解析，支持 `when_to_use/tags/allowed_*/required_scopes/min_citation_support`），`match` 支持关键词 + tags；未做 `SkillMeta/SkillSpec/SkillMatch` 嵌套（保持轻量）。
+> - **Cron（§18.3）**：`SchedulerService` 为**进程内内存实现**（`job_id:scheduled_at` 幂等、forbid/replace/allow、skip/run_once 补跑），**未实现** Redis `SETNX` 分布式互斥；单 worker 部署（见 06 §4.1）。
+> - **Guardrail（§18.5）**：`RuleGuardrail` 规则优先；`guardrail.model_enabled=true` 时叠加可选 `LayeredGuardrail` LLM 分类（默认关、失败按 `fail_open` 回退规则）。
+> - **MCP Server / A2A / Parser（§18.4/§18.6）**：端口为预留，默认未实现；`EventSinkPort.publish` 参数实为 `EventEnvelope`（非 `RunEvent`）。
 
 > 回答一个关键问题：**这些能力现在是"有架构位置但没接口"，还是"连位置都没有"？**
 > 结论：MCP 与 Security 已有位置但接口未完全显式化；Skill 与 Cron 原先只有产品层提及，**没有运行时契约**。本章统一补齐，且**不阻塞 M0 的 7 个核心端口**——按里程碑增量引入。
@@ -1423,7 +1536,7 @@ class SecretPort(Protocol):
 
 ```python
 class EventSinkPort(Protocol):
-    async def publish(self, event: "RunEvent") -> None: ...
+    async def publish(self, event: "EventEnvelope") -> None: ...
 
 class AgentPeerPort(Protocol):
     async def discover(self, capability: str) -> list["AgentCard"]: ...

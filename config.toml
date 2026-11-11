@@ -218,3 +218,47 @@ vault_path = "zcaisagent"
 eval_report_path = "data/eval/latest.json"
 eval_gate_path = "configs/eval_gate.toml"
 baseline_dir = "data/eval/baselines"
+
+# —— 可观测（细粒度事件 + 可选 OTel） ——
+# emit_events=true 时向 trace/EventSink 发射细粒度事件（run/step/llm/retrieval/
+# evidence/tool/approval/verify/finish）。otel_enabled 需可选依赖 .[otel]，
+# 初始化失败自动回退 JSONL。环境变量 ZCAISAGENT_OBS_EMIT_EVENTS / ZCAISAGENT_OTEL_* 可覆盖。
+[observability]
+emit_events = true
+otel_enabled = false
+otel_endpoint = ""
+service_name = "zcaisagent"
+sample_ratio = 1.0
+
+# —— 护栏模型层 ——
+# model_enabled=true 时在规则护栏之外叠加 LLM 分类（purpose），失败按 fail_open 放行。
+# 环境变量 ZCAISAGENT_GUARDRAIL_MODEL_ENABLED / _FAIL_OPEN 可覆盖。
+[guardrail]
+model_enabled = false
+purpose = "guardrail"
+fail_open = true
+
+# —— 语义校验（NLI judge） ——
+# semantic_verify_enabled=true 时 verify 节点用 LLM 判定 claim 是否被证据蕴含；
+# 失败按 fail_open 回退词面校验。环境变量 ZCAISAGENT_SEMANTIC_VERIFY_ENABLED 可覆盖。
+[evaluator]
+semantic_verify_enabled = false
+purpose = "verify"
+min_entailment = 0.8
+fail_open = true
+
+# —— 技能目录 ——
+# 启动时扫描 dir 下的 */SKILL.md；解析失败跳过并记健康信息。
+# 环境变量 ZCAISAGENT_SKILLS_ENABLED / ZCAISAGENT_SKILLS_DIR 可覆盖。
+[skills]
+enabled = true
+dir = "skills"
+
+# —— 检查点持久化 ——
+# backend=jsonl（默认，压缩+索引）| postgres（需 [database] 启用，失败回退 JSONL）。
+# 环境变量 ZCAISAGENT_CHECKPOINT_BACKEND / _COMPACT / _THRESHOLD / _KEEP 可覆盖。
+[checkpoint]
+backend = "jsonl"
+compact_enabled = true
+compact_threshold_lines = 20
+compact_keep = 1

@@ -8,6 +8,7 @@ from zcaisagent.capabilities.skills.registry import allowed_sources
 from zcaisagent.domain.models import Evidence, RunState
 from zcaisagent.domain.patch import StatePatch
 from zcaisagent.orchestration.runtime import RunContext
+from zcaisagent.orchestration.telemetry import emit
 from zcaisagent.ports.retrieval import RetrieveRequest, RetrieveResult
 from zcaisagent.ports.security import AuditEvent
 
@@ -219,7 +220,42 @@ async def retrieve_node(state: RunState, ctx: RunContext) -> StatePatch:
 
     if degraded:
         notes.append("retrieve_degraded:" + ",".join(sorted(degraded)))
-    patch = StatePatch(append_evidence=fused, append_notes=notes, budget=budget)
+    source_hits: dict[str, dict] = {}
+    for (_variant, retriever), result in zip(calls, results, strict=False):
+        if isinstance(result, BaseException):
+            continue
+        agg = source_hits.setdefault(
+            retriever.source_name, {"hits": 0, "degraded": False}
+        )
+        agg["hits"] += len(result.evidence)
+        agg["degraded"] = agg["degraded"] or result.degraded
+    for source, agg in source_hits.items():
+        await emit(
+            ctx,
+            state,
+            "retrieval.performed",
+            node="retrieve",
+            data={
+                "source": source,
+                "top_k": top_k,
+                "hits": agg["hits"],
+                "degraded": agg["degraded"],
+            },
+        )
+    if rerank_scores is not None:
+        await emit(
+            ctx,
+            state,
+            "rerank.performed",
+            node="retrieve",
+            data={"count": len(rerank_scores)},
+        )
+    patch = StatePatch(
+        append_evidence=fused,
+        append_notes=notes,
+        budget=budget,
+        incr_actions=1,
+    )
     if rerank_scores:
         patch.analysis = {"rerank_scores": rerank_scores}
     return patch

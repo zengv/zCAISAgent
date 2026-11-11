@@ -188,3 +188,20 @@ def judge_sufficiency(
         decision = "sufficient"
         missing = []
     return Sufficiency(coverage=coverage, missing_aspects=missing, decision=decision)
+
+
+class RuleEvaluator:
+    """``EvaluatorPort`` 的默认实现：包装上方本地确定性评分策略，便于按需替换。"""
+
+    def grade_evidence(
+        self,
+        question: str,
+        evidence: list[Evidence],
+        rerank_scores: dict[str, float] | None = None,
+    ) -> list[EvidenceGrade]:
+        return grade_evidence(question, evidence, rerank_scores=rerank_scores)
+
+    def judge_sufficiency(
+        self, question: str, evidence: list[Evidence], grades: list[EvidenceGrade]
+    ) -> Sufficiency:
+        return judge_sufficiency(question, evidence, grades)

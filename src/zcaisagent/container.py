@@ -6,6 +6,7 @@ import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from zcaisagent.adapters.cache.llm import CachedLLM
@@ -34,10 +35,8 @@ from zcaisagent.capabilities.retrieval.sources.graph import GraphRetriever
 from zcaisagent.capabilities.retrieval.sources.inmemory import InMemoryRetriever
 from zcaisagent.capabilities.retrieval.sources.pageindex import PageIndexRetriever
 from zcaisagent.capabilities.retrieval.sources.vector import VectorRetriever
-from zcaisagent.capabilities.skills.registry import (
-    InMemorySkillRegistry,
-    build_default_skill_registry,
-)
+from zcaisagent.capabilities.skills.loader import build_skill_registry
+from zcaisagent.capabilities.skills.registry import InMemorySkillRegistry
 from zcaisagent.capabilities.tools.builtin import (
     KnowledgeBaseSearchTool,
     TicketCreateTool,
@@ -51,10 +50,12 @@ from zcaisagent.domain.enums import AutonomyLevel
 from zcaisagent.domain.mandate import Mandate
 from zcaisagent.domain.models import Chunk, Message, RunState
 from zcaisagent.governance.audit import EnvSecret, JsonlAudit
-from zcaisagent.governance.guards import RuleGuardrail
+from zcaisagent.governance.guards import LayeredGuardrail, RuleGuardrail
 from zcaisagent.governance.identity import ApiKeyIdentity, RbacPolicy
 from zcaisagent.ingestion.pipeline import ingest_directory
 from zcaisagent.orchestration.policies.budget import BudgetPolicy
+from zcaisagent.orchestration.policies.evidence import RuleEvaluator
+from zcaisagent.orchestration.policies.verify_judge import LLMEntailmentJudge
 from zcaisagent.orchestration.runtime import RunContext
 from zcaisagent.ports.cache import CachePort
 from zcaisagent.ports.checkpoint import CheckpointPort
@@ -69,6 +70,7 @@ from zcaisagent.ports.security import (
     PolicyPort,
     SecretPort,
 )
+from zcaisagent.ports.trace import TracePort
 from zcaisagent.settings import Settings
 
 
@@ -79,7 +81,7 @@ class Container:
     sources: SourceRegistry
     llm: LLMPort
     checkpoint: CheckpointPort
-    trace: JsonlTrace
+    trace: TracePort
     audit: JsonlAudit
     identity: IdentityPort
     policy: PolicyPort
@@ -249,6 +251,62 @@ def build_events(
         owner="events",
     )
     return sink
+
+
+def build_trace(
+    settings: Settings,
+    data_dir: Path,
+    health: HealthBoard | None = None,
+) -> TracePort:
+    """按 [observability] 装配 trace：默认 JSONL；启用 OTel 时尝试包装，失败回退。"""
+    delegate = JsonlTrace(data_dir / "trace.jsonl")
+    obs = settings.observability
+    if not obs.otel_enabled:
+        return delegate
+    try:
+        from zcaisagent.adapters.trace.otel import OtelTrace
+
+        trace = OtelTrace(
+            delegate,
+            service_name=obs.service_name,
+            endpoint=obs.otel_endpoint,
+            sample_ratio=obs.sample_ratio,
+        )
+    except Exception as exc:  # noqa: BLE001 - OTel 可选，失败回退
+        _report_health(health, "trace", False, f"otel fallback: {exc}", owner="trace")
+        return delegate
+    _report_health(health, "trace", True, "otel", owner="trace")
+    return trace
+
+
+def build_checkpoint(
+    settings: Settings,
+    health: HealthBoard | None = None,
+) -> CheckpointPort:
+    """按 [checkpoint] 装配：默认 JSONL（压缩+索引）；可选 Postgres，失败回退。"""
+    config = settings.checkpoint
+    database = settings.database
+    root = settings.data_dir / "checkpoints"
+    if config.backend == "postgres" and database is not None and database.enabled:
+        try:
+            from zcaisagent.adapters.checkpoint.postgres import PostgresCheckpoint
+
+            checkpoint = PostgresCheckpoint(database.dsn)
+            checkpoint.ensure_schema()
+        except Exception as exc:  # noqa: BLE001 - PG 可选，失败回退 JSONL
+            _report_health(
+                health, "checkpoint", False, f"postgres fallback: {exc}", owner="checkpoint"
+            )
+        else:
+            _report_health(health, "checkpoint", True, "postgres", owner="checkpoint")
+            return checkpoint
+    _report_health(health, "checkpoint", True, "jsonl", owner="checkpoint")
+    return JsonlCheckpoint(
+        root,
+        config.compact_enabled,
+        config.compact_threshold_lines,
+        config.compact_keep,
+    )
 
 
 def build_configured_tools(
@@ -497,20 +555,29 @@ def build_container(settings: Settings | None = None, ingest: bool = True) -> Co
     events = build_events(settings, health)
     identity, policy = _build_security(settings, health)
 
+    skills_registry = build_skill_registry(settings)
+    _report_health(
+        health,
+        "skills",
+        not getattr(skills_registry, "load_errors", []),
+        f"{len(skills_registry.all())} skills",
+        owner="skills",
+    )
+
     return Container(
         settings=settings,
         retriever=retriever,
         sources=sources,
         llm=llm,
-        checkpoint=JsonlCheckpoint(settings.data_dir / "checkpoints"),
-        trace=JsonlTrace(settings.data_dir / "trace.jsonl"),
+        checkpoint=build_checkpoint(settings, health),
+        trace=build_trace(settings, settings.data_dir, health),
         audit=audit,
         identity=identity,
         policy=policy,
-        guardrail=RuleGuardrail(),
+        guardrail=LayeredGuardrail(RuleGuardrail(), llm, settings.guardrail),
         secret=secret,
         health=health,
-        skills=build_default_skill_registry(),
+        skills=skills_registry,
         memory=InMemoryMemory(
             max_items=settings.memory.max_items,
             ttl_s=settings.memory.ttl_s,
@@ -570,6 +637,13 @@ def create_state(
 
 
 def build_context(container: Container, auth: AuthContext) -> RunContext:
+    verifier = None
+    if container.settings.evaluator.semantic_verify_enabled:
+        verifier = LLMEntailmentJudge(
+            container.llm,
+            purpose=container.settings.evaluator.purpose,
+            timeout_s=container.settings.node_timeout_s,
+        )
     return RunContext(
         llm=container.llm,
         retriever=container.retriever,
@@ -579,6 +653,8 @@ def build_context(container: Container, auth: AuthContext) -> RunContext:
         config=container.settings,
         sources=container.sources,
         reranker=container.reranker,
+        evaluator=RuleEvaluator(),
+        verifier=verifier,
         health=container.health,
         guardrail=container.guardrail,
         audit=container.audit,

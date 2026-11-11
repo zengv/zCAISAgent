@@ -83,11 +83,14 @@ class Plan(BaseModel):
 
 class Budget(BaseModel):
     max_steps: int = 8
+    # 有效动作次数上限（retrieve / tool_call 等每执行一次计 1）；0 表示不限制。
+    max_actions: int = 0
     max_llm_calls: int = 12
     max_tokens: int = 60_000
     max_cost_usd: float = 0.15
     max_wall_time_s: int = 90
     used_steps: int = 0
+    used_actions: int = 0
     used_llm_calls: int = 0
     used_tokens: int = 0
     used_tokens_in: int = 0
@@ -113,7 +116,9 @@ class Skill(BaseModel):
     name: str
     version: str
     description: str = ""
+    when_to_use: str = ""
     instructions: str = ""
+    tags: tuple[str, ...] = ()
     trigger_keywords: tuple[str, ...] = ()
     allowed_sources: tuple[str, ...] = ()
     allowed_tools: tuple[str, ...] = ()

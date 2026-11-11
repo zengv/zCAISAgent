@@ -30,6 +30,8 @@ class StatePatch:
     append_invocations: list[ToolInvocation] = field(default_factory=list)
     append_message: Message | None = None
     incr_step: int = 0
+    # 有效动作次数（由执行动作的节点自报，如 retrieve/act）；由 reducer 累加到 budget.used_actions。
+    incr_actions: int = 0
     incr_repair: int = 0
     last_node: str | None = None
     pending_approval: PendingApproval | None = None

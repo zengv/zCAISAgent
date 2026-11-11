@@ -165,7 +165,7 @@ flowchart TB
 5. 节点：`analyze → route → retrieve → synthesize → verify → respond / abstain / direct_answer`；
 6. 适配器：OpenAI 兼容 LLM、内存检索、JSONL 检查点/追踪、API Key/RBAC/审计/护栏；
 7. 接口：`POST /v1/runs`、`POST /v1/chat`（SSE）、`GET /v1/runs/{id}/trace`、CLI；
-8. 数据：3 篇种子语料 + 30 条黄金集；20 条冒烟用例；
+8. 数据：6 篇种子语料 + 100 条黄金集（20 条冒烟用例）；
 9. 架构借鉴（dsh-superagent）：`SourceRegistry` 多源并行/降级、`Mandate` 授权可审计、`TicketStage` 派生阶段、`HealthBoard` 组件健康。
 
 ### 快速开始

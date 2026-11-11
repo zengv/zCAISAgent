@@ -1,8 +1,9 @@
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from pydantic import BaseModel, Field
 
-from zcaisagent.domain.models import Answer, Evidence, Verdict
+from zcaisagent.domain.models import Evidence
+from zcaisagent.ports.llm import LLMResponse
 
 
 class EvidenceGrade(BaseModel):
@@ -21,15 +22,36 @@ class Sufficiency(BaseModel):
     decision: str = "insufficient"
 
 
-class EvaluatorPort(Protocol):
-    async def grade_evidence(
-        self, question: str, evidence: list[Evidence]
-    ) -> EvidenceGrade: ...
+class EntailmentResult(BaseModel):
+    """单条 claim 的语义蕴含结果；score 为 None 表示判官不可用（可回退词面）。"""
 
-    async def judge_sufficiency(
-        self, question: str, evidence: list[Evidence]
+    score: float | None = None
+    response: LLMResponse | None = None
+
+
+@runtime_checkable
+class EvaluatorPort(Protocol):
+    """证据评分 / 充分性判定端口（离线策略，同步纯计算）。
+
+    默认实现为 ``orchestration/policies/evidence.py::RuleEvaluator``（本地确定性
+    规则）；可替换为向量/LLM judge 实现。答案级校验不在此端口内（由 ``verify``
+    节点承担）。
+    """
+
+    def grade_evidence(
+        self,
+        question: str,
+        evidence: list[Evidence],
+        rerank_scores: dict[str, float] | None = None,
+    ) -> list[EvidenceGrade]: ...
+
+    def judge_sufficiency(
+        self, question: str, evidence: list[Evidence], grades: list[EvidenceGrade]
     ) -> Sufficiency: ...
 
-    async def verify_answer(
-        self, answer: Answer, evidence: list[Evidence]
-    ) -> Verdict: ...
+
+@runtime_checkable
+class AnswerVerifierPort(Protocol):
+    """答案级语义校验端口（NLI judge）；默认实现复用 LLMPort，可由容器按需注入。"""
+
+    async def entail(self, claim: str, evidence: list[str]) -> EntailmentResult: ...

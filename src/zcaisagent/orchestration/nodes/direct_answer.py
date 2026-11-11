@@ -2,6 +2,7 @@ from zcaisagent.domain.enums import RunStatus
 from zcaisagent.domain.models import Answer, Message, RunState
 from zcaisagent.domain.patch import StatePatch
 from zcaisagent.orchestration.runtime import RunContext
+from zcaisagent.orchestration.telemetry import emit
 from zcaisagent.ports.llm import LLMRequest, LLMResponse
 
 
@@ -26,6 +27,17 @@ async def direct_answer_node(state: RunState, ctx: RunContext) -> StatePatch:
         response = final.model_copy(update={"text": text}) if final else LLMResponse(text=text)
     else:
         response = await ctx.llm.complete(request)
+    await emit(
+        ctx,
+        state,
+        "llm.called",
+        node="direct_answer",
+        data={
+            "purpose": "direct_answer",
+            "tokens": response.tokens_in + response.tokens_out,
+            "cost_usd": round(response.cost_usd, 6),
+        },
+    )
     budget = state.budget.model_copy(
         update={
             "used_llm_calls": state.budget.used_llm_calls + 1,

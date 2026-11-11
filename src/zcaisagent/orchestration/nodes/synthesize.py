@@ -6,6 +6,7 @@ from zcaisagent.domain.enums import AutonomyLevel
 from zcaisagent.domain.models import Answer, Budget, Claim, Message, RunState
 from zcaisagent.domain.patch import StatePatch
 from zcaisagent.orchestration.runtime import RunContext
+from zcaisagent.orchestration.telemetry import emit
 from zcaisagent.ports.llm import LLMRequest, LLMResponse
 
 _SYSTEM = (
@@ -257,6 +258,22 @@ async def synthesize_node(state: RunState, ctx: RunContext) -> StatePatch:
             patch.append_notes = [*patch.append_notes, f"stream_fallback:{exc}"]
     else:
         patch = await _complete_synthesize(state, ctx, system, prompt)
+    delta_tokens = 0
+    delta_cost = 0.0
+    if patch.budget is not None:
+        delta_tokens = patch.budget.used_tokens - state.budget.used_tokens
+        delta_cost = patch.budget.used_cost_usd - state.budget.used_cost_usd
+    await emit(
+        ctx,
+        state,
+        "llm.called",
+        node="synthesize",
+        data={
+            "purpose": "synthesize",
+            "tokens": delta_tokens,
+            "cost_usd": round(delta_cost, 6),
+        },
+    )
     if memory_notes:
         patch.append_notes = [*patch.append_notes, *memory_notes]
     return patch

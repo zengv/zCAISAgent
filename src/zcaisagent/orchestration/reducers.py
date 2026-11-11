@@ -16,7 +16,12 @@ def apply_patch(state: RunState, patch: StatePatch) -> RunState:
     if patch.verdict is not None:
         update["verdict"] = patch.verdict.model_dump()
     if patch.budget is not None:
-        update["budget"] = patch.budget.model_dump()
+        budget = patch.budget.model_dump()
+    else:
+        budget = dict(update["budget"])
+    if patch.incr_actions:
+        budget["used_actions"] = int(budget.get("used_actions", 0)) + patch.incr_actions
+    update["budget"] = budget
     if patch.error is not None:
         update["error"] = patch.error
     if patch.analysis is not None:
