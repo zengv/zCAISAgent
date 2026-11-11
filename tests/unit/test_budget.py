@@ -1,5 +1,5 @@
-from zcaisagent.orchestration.policies.budget import BudgetPolicy
 from tests.conftest import make_state
+from zcaisagent.orchestration.policies.budget import BudgetPolicy
 
 
 def test_budget_exceeded_by_steps() -> None:

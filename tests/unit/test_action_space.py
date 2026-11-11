@@ -1,8 +1,8 @@
 import pytest
 
 from zcaisagent.orchestration.actions.registry import (
-    ActionSpec,
     ActionSpace,
+    ActionSpec,
     build_default_action_space,
 )
 

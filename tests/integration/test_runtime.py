@@ -1,7 +1,7 @@
 import asyncio
 
-from zcaisagent.domain.enums import RunStatus
 from tests.conftest import make_chunk, make_ctx, make_state, run_graph
+from zcaisagent.domain.enums import RunStatus
 
 
 def test_runtime_retrieves_and_answers() -> None:

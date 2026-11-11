@@ -1,8 +1,8 @@
 from typing import Protocol
 
-from zcaisagent.domain.models import Answer, Evidence
-from zcaisagent.domain.models import Verdict
 from pydantic import BaseModel, Field
+
+from zcaisagent.domain.models import Answer, Evidence, Verdict
 
 
 class EvidenceGrade(BaseModel):

@@ -1,7 +1,7 @@
+from tests.conftest import make_state
 from zcaisagent.domain.enums import RunStatus
 from zcaisagent.domain.models import Answer, Verdict
 from zcaisagent.domain.stage import TicketStage, ticket_stage
-from tests.conftest import make_state
 
 
 def _with(state, **updates):

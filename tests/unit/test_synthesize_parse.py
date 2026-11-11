@@ -40,7 +40,8 @@ def test_empty_output_triggers_one_retry() -> None:
     llm = _QueueLLM(
         [
             "",
-            '{"answer":"应为 800 元。","claims":[{"text":"一线城市住宿标准为 800 元。","evidence_ids":["ev1"]}]}',
+            '{"answer":"应为 800 元。","claims":['
+            '{"text":"一线城市住宿标准为 800 元。","evidence_ids":["ev1"]}]}',
         ]
     )
     ctx = SimpleNamespace(

@@ -178,7 +178,9 @@ def _valid_model_analysis(payload: dict) -> dict | None:
     }
 
 
-async def _model_analysis(state: RunState, ctx: RunContext) -> tuple[dict | None, StatePatch | None]:
+async def _model_analysis(
+    state: RunState, ctx: RunContext
+) -> tuple[dict | None, StatePatch | None]:
     if ctx.llm is None:
         return None, None
     request = LLMRequest(

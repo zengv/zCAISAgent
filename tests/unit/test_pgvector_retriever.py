@@ -1,8 +1,8 @@
 import asyncio
 
+from tests.conftest import make_auth
 from zcaisagent.capabilities.retrieval.sources.pgvector import PgVectorRetriever
 from zcaisagent.ports.retrieval import RetrieveRequest
-from tests.conftest import make_auth
 
 
 class _BrokenStore:

@@ -14,7 +14,6 @@ from zcaisagent.orchestration.build import build_default_graph
 from zcaisagent.orchestration.runtime import Runtime
 from zcaisagent.ports.security import AuditEvent, AuthContext
 
-
 router = APIRouter()
 
 
@@ -127,7 +126,7 @@ async def chat(
             while not (task.done() and queue.empty()):
                 try:
                     event, data = await asyncio.wait_for(queue.get(), timeout=0.05)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     continue
                 yield _sse(event, data)
             if task.cancelled():

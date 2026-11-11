@@ -13,7 +13,7 @@ from zcaisagent.ports.security import AuthContext
 def cosine(left: list[float], right: list[float]) -> float:
     if not left or len(left) != len(right):
         return 0.0
-    dot = sum(a * b for a, b in zip(left, right))
+    dot = sum(a * b for a, b in zip(left, right, strict=False))
     norm_l = math.sqrt(sum(value * value for value in left))
     norm_r = math.sqrt(sum(value * value for value in right))
     if norm_l == 0.0 or norm_r == 0.0:
@@ -51,7 +51,10 @@ class VectorRetriever:
         if len(vectors) != len(self.chunks):
             self._failed = True
             raise ValueError("embedding count mismatch")
-        self._vectors = {chunk.id: vector for chunk, vector in zip(self.chunks, vectors)}
+        self._vectors = {
+            chunk.id: vector
+            for chunk, vector in zip(self.chunks, vectors, strict=False)
+        }
 
     async def retrieve(self, req: RetrieveRequest, ctx: AuthContext) -> RetrieveResult:
         started = time.perf_counter()

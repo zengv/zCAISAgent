@@ -49,7 +49,7 @@ async def _retrieve(query: str, state: RunState, ctx: RunContext) -> dict:
     )
     items: list[dict] = []
     sources: list[str] = []
-    for retriever, result in zip(retrievers, results):
+    for retriever, result in zip(retrievers, results, strict=False):
         if isinstance(result, BaseException):
             sources.append(f"{retriever.source_name}:error")
             continue

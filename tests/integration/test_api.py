@@ -4,7 +4,6 @@ from fastapi.testclient import TestClient
 
 from zcaisagent.api.app import app
 
-
 client = TestClient(app)
 
 

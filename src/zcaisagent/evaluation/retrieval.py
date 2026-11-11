@@ -8,7 +8,7 @@ from zcaisagent.capabilities.retrieval.fusion import rrf_fuse, source_weight
 from zcaisagent.capabilities.retrieval.sources.inmemory import current_versions
 from zcaisagent.domain.models import Chunk
 from zcaisagent.domain.versions import split_document_id
-from zcaisagent.ports.retrieval import RetrieverPort, RetrieveRequest
+from zcaisagent.ports.retrieval import RetrieveRequest, RetrieverPort
 from zcaisagent.ports.security import AuthContext
 
 _PUNCT = re.compile(r"[\s，。、；：！？,.;:!?¥￥()（）\"'“”‘’]")
@@ -143,7 +143,7 @@ async def _rank(
             fused = [
                 item
                 for _, item in sorted(
-                    zip(scores, fused), key=lambda pair: -pair[0]
+                    zip(scores, fused, strict=False), key=lambda pair: -pair[0]
                 )
             ]
         except Exception:  # noqa: BLE001 - rerank 不可用时保持融合原序

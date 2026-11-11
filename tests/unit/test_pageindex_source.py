@@ -75,8 +75,12 @@ def test_pageindex_degrades_without_uri(tmp_path) -> None:
 def test_pageindex_keeps_only_current_version(tmp_path) -> None:
     old = tmp_path / "travel_policy-v1.0.md"
     new = tmp_path / "travel_policy-v1.1.md"
-    old.write_text("<!-- page: 1 -->\n\n# 差旅政策\n\n## 住宿标准\n\n住宿 801 元/晚。\n", encoding="utf-8")
-    new.write_text("<!-- page: 1 -->\n\n# 差旅政策\n\n## 住宿标准\n\n住宿 800 元/晚。\n", encoding="utf-8")
+    old.write_text(
+        "<!-- page: 1 -->\n\n# 差旅政策\n\n## 住宿标准\n\n住宿 801 元/晚。\n", encoding="utf-8"
+    )
+    new.write_text(
+        "<!-- page: 1 -->\n\n# 差旅政策\n\n## 住宿标准\n\n住宿 800 元/晚。\n", encoding="utf-8"
+    )
     retriever = PageIndexRetriever()
     retriever.add(
         chunk_document("travel_policy", "差旅政策", parse_file(old), uri=str(old), version="1.0")

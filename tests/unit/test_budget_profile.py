@@ -1,6 +1,6 @@
+from tests.conftest import make_state
 from zcaisagent.domain.enums import AutonomyLevel
 from zcaisagent.orchestration.policies.budget import BudgetPolicy
-from tests.conftest import make_state
 
 
 def test_l1_step_budget_covers_worst_case_repair_path() -> None:

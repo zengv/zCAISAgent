@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -36,7 +36,7 @@ class Evidence(BaseModel):
     final_score: float = 0.0
     grade: Literal["keep", "drop", "conflict"] = "keep"
     published_at: datetime | None = None
-    retrieved_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    retrieved_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     version: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
     citation: Citation | None = None

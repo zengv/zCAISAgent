@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from zcaisagent.domain.models import Evidence
 from zcaisagent.orchestration.policies.evidence import grade_evidence, judge_sufficiency
@@ -23,7 +23,7 @@ def _evidence(
 
 
 def test_grade_uses_four_dimension_weights() -> None:
-    now = datetime(2026, 11, 8, tzinfo=timezone.utc)
+    now = datetime(2026, 11, 8, tzinfo=UTC)
     item = _evidence("doc#0", "一线城市住宿标准为 800 元/晚", published_at=now)
     grade = grade_evidence("一线城市住宿标准是多少？", [item], now=now)[0]
     assert grade.relevance > 0
@@ -37,7 +37,7 @@ def test_grade_uses_four_dimension_weights() -> None:
 
 
 def test_stale_evidence_loses_freshness_score() -> None:
-    now = datetime(2026, 11, 8, tzinfo=timezone.utc)
+    now = datetime(2026, 11, 8, tzinfo=UTC)
     item = _evidence(
         "doc#0",
         "一线城市住宿标准为 800 元/晚",

@@ -1,9 +1,9 @@
 import asyncio
 
+from tests.conftest import make_chunk, make_ctx
 from zcaisagent.ingestion.chunker import chunk_document
 from zcaisagent.ingestion.pipeline import ingest_directory
 from zcaisagent.ports.retrieval import RetrieveRequest
-from tests.conftest import make_chunk, make_ctx
 
 
 def test_retriever_filters_acl() -> None:

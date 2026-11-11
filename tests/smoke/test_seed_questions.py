@@ -9,7 +9,6 @@ from zcaisagent.orchestration.build import build_default_graph
 from zcaisagent.orchestration.runtime import Runtime
 from zcaisagent.settings import Settings
 
-
 QUESTIONS = [
     "一线城市住宿标准是多少？",
     "二线城市住宿标准是多少？",

@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 
 from zcaisagent.domain.models import Message
-from zcaisagent.ports.llm import LLMRequest, LLMPort, LLMResponse
+from zcaisagent.ports.llm import LLMPort, LLMRequest, LLMResponse
 
 _QUESTION_WORDS = (
     "请问",

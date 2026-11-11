@@ -69,7 +69,9 @@ async def run_dataset(
             level=level,
             auth=auth,
         )
-        state = await Runtime().execute(build_default_graph(), state, build_context(container, auth))
+        state = await Runtime().execute(
+            build_default_graph(), state, build_context(container, auth)
+        )
         results.append(
             evaluate_case(
                 case,

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from zcaisagent.domain.models import Evidence
 from zcaisagent.domain.text import numbers_in, overlap_ratio, tokenize
@@ -82,7 +82,7 @@ def _freshness(evidence: Evidence, now: datetime) -> float:
         return 0.6
     published = evidence.published_at
     if published.tzinfo is None:
-        published = published.replace(tzinfo=timezone.utc)
+        published = published.replace(tzinfo=UTC)
     age_days = max(0.0, (now - published).total_seconds() / 86400)
     return 0.5 ** (age_days / _HALF_LIFE_DAYS)
 
@@ -107,7 +107,7 @@ def grade_evidence(
     now: datetime | None = None,
     rerank_scores: dict[str, float] | None = None,
 ) -> list[EvidenceGrade]:
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     similarity = {
         (left.id, right.id): _jaccard(left.content, right.content)
         for index, left in enumerate(evidence)

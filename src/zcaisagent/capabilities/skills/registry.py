@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Iterable, Sequence
+from collections.abc import Iterable, Sequence
 
 from zcaisagent.domain.models import RunState, Skill
 from zcaisagent.ports.skills import SkillDecision

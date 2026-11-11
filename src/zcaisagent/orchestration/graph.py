@@ -1,11 +1,17 @@
+from __future__ import annotations
+
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from zcaisagent.domain.enums import RunStatus
 from zcaisagent.domain.models import RunState
 from zcaisagent.domain.patch import StatePatch
 
-NodeFn = Callable[[RunState, "RunContext"], Awaitable[StatePatch]]
+if TYPE_CHECKING:
+    from zcaisagent.orchestration.runtime import RunContext
+
+type NodeFn = Callable[[RunState, RunContext], Awaitable[StatePatch]]
 Condition = Callable[[RunState], bool]
 
 

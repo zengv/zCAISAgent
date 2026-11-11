@@ -1,8 +1,8 @@
+from tests.conftest import make_state
 from zcaisagent.domain.enums import RunStatus
 from zcaisagent.domain.models import Evidence, Message
-from zcaisagent.orchestration.reducers import apply_patch
 from zcaisagent.domain.patch import StatePatch
-from tests.conftest import make_state
+from zcaisagent.orchestration.reducers import apply_patch
 
 
 def test_apply_patch_appends_and_dedupes_evidence() -> None:

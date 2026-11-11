@@ -1,7 +1,7 @@
 import asyncio
 
-from zcaisagent.orchestration.nodes.retrieve import retrieve_node
 from tests.conftest import make_chunk, make_ctx, make_state
+from zcaisagent.orchestration.nodes.retrieve import retrieve_node
 
 
 def test_retrieve_uses_rewritten_variants_for_multi_hop() -> None:

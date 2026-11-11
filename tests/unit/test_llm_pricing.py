@@ -6,7 +6,7 @@ import pytest
 from zcaisagent.adapters.llm.openai_compat import OpenAICompatLLM
 from zcaisagent.domain.models import Message
 from zcaisagent.ports.llm import LLMRequest
-from zcaisagent.settings import Settings, ModelProvider
+from zcaisagent.settings import ModelProvider, Settings
 
 
 def _mk_settings(

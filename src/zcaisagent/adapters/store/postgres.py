@@ -127,7 +127,7 @@ class PsycopgVectorStore:
                 chunk.parent_id,
                 vector_literal(vector),
             )
-            for chunk, vector in zip(chunks, vectors)
+            for chunk, vector in zip(chunks, vectors, strict=False)
         ]
         if not rows:
             return 0

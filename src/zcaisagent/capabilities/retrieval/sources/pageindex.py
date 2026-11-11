@@ -147,7 +147,7 @@ class PageIndexRetriever:
         by_id = {chunk.id: chunk for chunk in self.chunks}
         evidence: list[Evidence] = []
         seen_chunks: set[str] = set()
-        for rank, (score, section) in enumerate(scored):
+        for score, section in scored:
             if len(evidence) >= req.top_k or req.top_k <= 0:
                 break
             # 多个短章节可能锚定同一 chunk，保留得分最高的一条。

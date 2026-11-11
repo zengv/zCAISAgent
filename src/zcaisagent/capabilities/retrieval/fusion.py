@@ -39,7 +39,7 @@ def rrf_fuse(
         weights = [1.0] * len(ranked_lists)
     scores: dict[str, float] = {}
     best: dict[str, Evidence] = {}
-    for weight, ranked in zip(weights, ranked_lists):
+    for weight, ranked in zip(weights, ranked_lists, strict=False):
         for rank, item in enumerate(ranked, start=1):
             scores[item.id] = scores.get(item.id, 0.0) + weight / (k + rank)
             current = best.get(item.id)

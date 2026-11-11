@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import StrEnum
 
 from pydantic import BaseModel, Field
@@ -20,4 +20,4 @@ class Mandate(BaseModel):
     scopes: list[str] = Field(default_factory=list)
     acl_tokens: list[str] = Field(default_factory=lambda: ["public"])
     basis: str = "api_request"
-    issued_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    issued_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

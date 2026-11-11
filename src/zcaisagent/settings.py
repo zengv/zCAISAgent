@@ -16,6 +16,7 @@ from typing import Literal
 ENV_PREFIX = "ZCAISAGENT_"
 ENV_FILE = "ZCAISAGENT_ENV_FILE"
 CONFIG_FILE = "ZCAISAGENT_CONFIG_FILE"
+_TRUE_VALUES = {"1", "true", "yes"}
 
 Effort = Literal["low", "high", "max"]
 
@@ -261,7 +262,7 @@ class Settings:
         cls,
         env_file: str | Path | None = None,
         config_file: str | Path | None = None,
-    ) -> "Settings":
+    ) -> Settings:
         # 先读 .env，再让进程环境变量覆盖
         env_path = Path(env_file).expanduser() if env_file else _default_env_file()
         env = _load_env_file(env_path)
@@ -284,7 +285,7 @@ class Settings:
         raw_embedding = cfg.get("embedding", {}) or {}
         embed_on = bool(raw_embedding.get("enabled", False))
         if os.getenv(f"{ENV_PREFIX}EMBEDDING_ENABLED"):
-            embed_on = os.getenv(f"{ENV_PREFIX}EMBEDDING_ENABLED", "").lower() in {"1", "true", "yes"}
+            embed_on = os.getenv(f"{ENV_PREFIX}EMBEDDING_ENABLED", "").lower() in _TRUE_VALUES
         if embed_on:
             embedding = EmbeddingConfig(
                 model=raw_embedding["model"],
@@ -293,12 +294,12 @@ class Settings:
             )
         rerank_enabled = bool((cfg.get("rerank", {}) or {}).get("enabled", False))
         if os.getenv(f"{ENV_PREFIX}RERANK_ENABLED"):
-            rerank_enabled = os.getenv(f"{ENV_PREFIX}RERANK_ENABLED", "").lower() in {"1", "true", "yes"}
+            rerank_enabled = os.getenv(f"{ENV_PREFIX}RERANK_ENABLED", "").lower() in _TRUE_VALUES
 
         raw_retrieval = cfg.get("retrieval", {}) or {}
         hyde_enabled = bool(raw_retrieval.get("hyde_enabled", False))
         if os.getenv(f"{ENV_PREFIX}HYDE_ENABLED"):
-            hyde_enabled = os.getenv(f"{ENV_PREFIX}HYDE_ENABLED", "").lower() in {"1", "true", "yes"}
+            hyde_enabled = os.getenv(f"{ENV_PREFIX}HYDE_ENABLED", "").lower() in _TRUE_VALUES
         hyde_max_tokens = int(raw_retrieval.get("hyde_max_tokens", 256))
         parent_child_enabled = bool(raw_retrieval.get("parent_child_enabled", False))
         if os.getenv(f"{ENV_PREFIX}PARENT_CHILD_ENABLED"):

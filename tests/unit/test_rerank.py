@@ -5,9 +5,9 @@ from zcaisagent.capabilities.retrieval.rerank import (
     LLMPointwiseReranker,
     _parse_rerank_results,
 )
-from zcaisagent.ports.llm import LLMRequest, LLMResponse
 from zcaisagent.domain.models import Evidence
 from zcaisagent.orchestration.policies.evidence import grade_evidence
+from zcaisagent.ports.llm import LLMRequest, LLMResponse
 
 
 def _evidence(evidence_id: str, content: str, relevance: float = 0.0) -> Evidence:
@@ -131,7 +131,11 @@ def test_rerank_server_returns_jina_style_results() -> None:
     client = TestClient(app)
     resp = client.post(
         "/v1/rerank",
-        json={"query": "调休有什么规定？", "documents": ["加班可申请调休", "年会安排在十二月"], "top_n": 1},
+        json={
+            "query": "调休有什么规定？",
+            "documents": ["加班可申请调休", "年会安排在十二月"],
+            "top_n": 1,
+        },
     )
     assert resp.status_code == 200
     data = resp.json()

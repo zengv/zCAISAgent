@@ -62,7 +62,9 @@ class GraphRetriever:
     def __len__(self) -> int:
         return len(self._entity_chunks)
 
-    async def _extract_document(self, doc_id: str, version: str | None, chunks: list[Chunk]) -> None:
+    async def _extract_document(
+        self, doc_id: str, version: str | None, chunks: list[Chunk]
+    ) -> None:
         body = "\n".join(chunk.content for chunk in chunks)[:_MAX_DOC_CHARS]
         # 极简指令 + 内嵌 JSON 模板：思考型模型对长指令容易思考不收敛导致空输出。
         prompt = (

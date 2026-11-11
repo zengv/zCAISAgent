@@ -34,4 +34,4 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -e ".[dev]"
-      - run: python -m zcaisagent.cli eval-gate --path data/eval/golden.jsonl --thresholds configs/eval_gate.ci.toml
+      - run: python -m zcaisagent.cli eval-gate --report data/eval/baselines/fake-100.json --thresholds configs/eval_gate.ci.toml

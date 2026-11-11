@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from zcaisagent.ports.retrieval import RetrieverPort, RetrieveRequest
+from zcaisagent.ports.retrieval import RetrieveRequest, RetrieverPort
 from zcaisagent.ports.security import AuthContext
 from zcaisagent.ports.tools import ToolResult, ToolSpec
 

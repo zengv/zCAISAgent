@@ -1,7 +1,7 @@
 from enum import StrEnum
 from typing import Protocol
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
 class HealthStatus(StrEnum):

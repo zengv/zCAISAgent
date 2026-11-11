@@ -1,10 +1,14 @@
 import os
 from pathlib import Path
+from unittest import mock
+
+import pytest
 
 from zcaisagent.adapters.checkpoint.jsonl import InMemoryCheckpoint
 from zcaisagent.adapters.llm.fake import FakeLLM
 from zcaisagent.adapters.trace.jsonl import JsonlTrace
 from zcaisagent.capabilities.retrieval.sources.inmemory import InMemoryRetriever
+from zcaisagent.container import build_container
 from zcaisagent.domain.enums import AutonomyLevel
 from zcaisagent.domain.models import Chunk, Message, RunState
 from zcaisagent.orchestration.build import build_default_graph
@@ -16,6 +20,23 @@ from zcaisagent.settings import Settings
 
 # 测试不读取项目 .env，避免真实模型与密钥影响用例。
 os.environ.setdefault("ZCAISAGENT_ENV_FILE", str(Path(__file__).with_name(".env.test")))
+
+
+@pytest.fixture(scope="session", autouse=True)
+def offline_api_container(tmp_path_factory):
+    """API 集成测试统一使用离线 FakeLLM 容器，避免依赖真实模型密钥。"""
+    from zcaisagent.api import deps
+
+    container = build_container(
+        Settings(
+            data_dir=tmp_path_factory.mktemp("api"),
+            seed_dir=Path("data/seed"),
+        )
+    )
+    with mock.patch.object(deps, "build_container", return_value=container):
+        deps.get_container.cache_clear()
+        yield container
+        deps.get_container.cache_clear()
 
 
 def make_state(goal: str, level: AutonomyLevel = AutonomyLevel.L1_FAST) -> RunState:

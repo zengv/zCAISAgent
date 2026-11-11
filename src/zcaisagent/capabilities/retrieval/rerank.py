@@ -4,7 +4,7 @@ import httpx
 
 from zcaisagent.capabilities.retrieval.sources.vector import cosine
 from zcaisagent.domain.models import Message
-from zcaisagent.ports.llm import EmbeddingPort, LLMRequest, LLMPort, RerankPort
+from zcaisagent.ports.llm import EmbeddingPort, LLMPort, LLMRequest, RerankPort
 from zcaisagent.settings import RerankConfig
 
 _MAX_DOC_CHARS = 300

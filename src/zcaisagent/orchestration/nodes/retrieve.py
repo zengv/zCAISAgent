@@ -80,7 +80,7 @@ async def retrieve_node(state: RunState, ctx: RunContext) -> StatePatch:
 
     ranked_lists: list[list[Evidence]] = []
     degraded: set[str] = set()
-    for (variant, retriever), result in zip(calls, results):
+    for (variant, retriever), result in zip(calls, results, strict=False):
         strategy = variant["strategy"]
         if isinstance(result, BaseException):
             degraded.add(retriever.source_name)
@@ -111,11 +111,11 @@ async def retrieve_node(state: RunState, ctx: RunContext) -> StatePatch:
         try:
             scores = await reranker.rerank(rerank_query, [item.content for item in fused])
             rerank_scores = {
-                item.id: round(score, 4) for item, score in zip(fused, scores)
+                item.id: round(score, 4) for item, score in zip(fused, scores, strict=False)
             }
             fused = [
                 item.model_copy(update={"relevance": round(score, 4)})
-                for item, score in zip(fused, scores)
+                for item, score in zip(fused, scores, strict=False)
             ]
             notes.append(f"rerank:applied:{len(fused)}")
         except Exception:  # noqa: BLE001 - rerank 不可用时回退词法相关性

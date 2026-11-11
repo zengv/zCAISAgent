@@ -3,7 +3,6 @@ from fastapi import APIRouter, HTTPException
 from zcaisagent.api.deps import get_container
 from zcaisagent.domain.events import RunEvent
 
-
 router = APIRouter()
 
 
