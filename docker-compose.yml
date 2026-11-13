@@ -2,7 +2,7 @@ services:
   api:
     build: .
     ports:
-      - "8080:8080"
+      - "6278:6278"
     environment:
       # 镜像不包含 config.toml，未配置任何 provider 时自动使用 FakeLLM。
       ZCAISAGENT_SEED_DIR: /app/data/seed
@@ -18,7 +18,7 @@ services:
     volumes:
       - zcaisagent_data:/app/.zcaisagent
     healthcheck:
-      test: ["CMD", "python", "-c", "import sys,urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3).status == 200 else 1)"]
+      test: ["CMD", "python", "-c", "import sys,urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:6278/health', timeout=3).status == 200 else 1)"]
       interval: 30s
       timeout: 5s
       retries: 3

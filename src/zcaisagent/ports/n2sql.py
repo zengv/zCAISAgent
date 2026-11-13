@@ -23,6 +23,8 @@ class N2SQLResult(BaseModel):
     columns: list[str] = Field(default_factory=list)
     rows: list[dict[str, Any]] = Field(default_factory=list)
     scope: str = ""
+    # 本次查询的行数上限；返回行数达到该值时可能被截断。
+    row_limit: int = 0
     error_code: str = ""
     error_message: str = ""
     tokens_in: int = 0

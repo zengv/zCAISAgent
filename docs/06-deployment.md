@@ -66,7 +66,7 @@ $env:ZCAISAGENT_SEED_DIR = "data/seed"
 $env:PYTHONPATH = "src"
 $env:ZCAISAGENT_CONFIG_FILE = "$env:TEMP\zcaisagent-offline.toml"
 New-Item -ItemType File -Path $env:ZCAISAGENT_CONFIG_FILE -Force | Out-Null
-uvicorn zcaisagent.api.app:app --host 127.0.0.1 --port 8080
+uvicorn zcaisagent.api.app:app --host 127.0.0.1 --port 6278
 ```
 
 空 TOML 会回退到内置默认值：FakeLLM、内置 `admin` 角色（含 `admin:read` / `admin:write`）、
@@ -79,17 +79,17 @@ uvicorn zcaisagent.api.app:app --host 127.0.0.1 --port 8080
 
 ```powershell
 $env:PYTHONPATH = "src"
-uvicorn zcaisagent.api.app:app --host 127.0.0.1 --port 8080
+uvicorn zcaisagent.api.app:app --host 127.0.0.1 --port 6278
 ```
 
 | 入口 | 地址 | 用途 |
 |---|---|---|
-| Chat | <http://127.0.0.1:8080/> | 对话与引用查看，首次在左侧填 `X-API-Key` |
-| Studio | <http://127.0.0.1:8080/studio> | 数据源 / 轨迹 / 评估 / 配置四页 |
-| 健康检查 | <http://127.0.0.1:8080/health> | 组件健康快照 |
+| Chat | <http://127.0.0.1:6278/> | 对话与引用查看，首次在左侧填 `X-API-Key` |
+| Studio | <http://127.0.0.1:6278/studio> | 数据源 / 轨迹 / 评估 / 配置四页 |
+| 健康检查 | <http://127.0.0.1:6278/health> | 组件健康快照 |
 
 ```powershell
-Invoke-RestMethod http://127.0.0.1:8080/health
+Invoke-RestMethod http://127.0.0.1:6278/health
 ```
 
 ### 2.5 Windows 一键控制台
@@ -102,7 +102,7 @@ Invoke-RestMethod http://127.0.0.1:8080/health
 ```
 
 脚本会依次探测 `.venv` → PATH `python` → conda 环境 → `python3`，以
-`uvicorn zcaisagent.api.app:app --host 127.0.0.1 --port 8080` 后台启动，日志写入
+`uvicorn zcaisagent.api.app:app --host 127.0.0.1 --port 6278` 后台启动，日志写入
 `.zcaisagent/backend.log`（stderr）与 `.zcaisagent/backend.log.out`（stdout）。
 
 ### 2.6 智能问数（可选 MySQL）
@@ -121,7 +121,7 @@ $env:ZCAISAGENT_N2SQL_DATABASE = "school"
 `config.toml` 需确认 `[n2sql]` 的 `enabled` / `tables` / `schema`，以及 `[[n2sql.users]]` 的用户范围（见仓库默认配置）。
 
 ```powershell
-Invoke-RestMethod -Method Post http://127.0.0.1:8080/v1/n2sql `
+Invoke-RestMethod -Method Post http://127.0.0.1:6278/v1/n2sql `
   -Headers @{"X-API-Key"="dev-key"} `
   -Body (@{question="S1 的成绩是多少？"; user_id="s_s1"} | ConvertTo-Json)
 ```
@@ -146,9 +146,9 @@ docker compose up --build
 ```
 
 - 镜像基于 `python:3.12-slim`，只复制 `src`、`data` 与构建所需的 `pyproject.toml` / `README.md`，**不复制 `config.toml`**，因此容器内没有 provider，自动使用 `FakeLLM`。
-- 端口：`8080:8080`；数据卷：`zcaisagent_data:/app/.zcaisagent`。
+- 端口：`6278:6278`；数据卷：`zcaisagent_data:/app/.zcaisagent`。
 - 访问 `/`、`/studio`、`/health` 与本地一致。
-- `api` 已配置 `healthcheck`，每 30 秒请求一次 `http://127.0.0.1:8080/health`。
+- `api` 已配置 `healthcheck`，每 30 秒请求一次 `http://127.0.0.1:6278/health`。
 
 > `/health` 在组件降级时仍返回 HTTP 200，只在响应体把 `status` 标为 `degraded`。
 > 因此容器健康检查只验证“进程与 HTTP 可达”，组件级状态要看响应体或 Studio。
@@ -221,7 +221,7 @@ Group=zcais
 WorkingDirectory=/opt/zcaisagent
 Environment=PYTHONPATH=/opt/zcaisagent/src
 EnvironmentFile=/etc/zcaisagent.env
-ExecStart=/opt/zcaisagent/.venv/bin/uvicorn zcaisagent.api.app:app --host 127.0.0.1 --port 8080
+ExecStart=/opt/zcaisagent/.venv/bin/uvicorn zcaisagent.api.app:app --host 127.0.0.1 --port 6278
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true
@@ -245,7 +245,7 @@ journalctl -u zcaisagent -f
 推荐用 [NSSM](https://nssm.cc/) 或等价的服务包装器：
 
 ```powershell
-nssm install zCAISAgent "C:\zcaisagent\.venv\Scripts\python.exe" "-m uvicorn zcaisagent.api.app:app --host 127.0.0.1 --port 8080"
+nssm install zCAISAgent "C:\zcaisagent\.venv\Scripts\python.exe" "-m uvicorn zcaisagent.api.app:app --host 127.0.0.1 --port 6278"
 nssm set zCAISAgent AppDirectory "C:\zcaisagent"
 nssm set zCAISAgent AppEnvironmentExtra "PYTHONPATH=C:\zcaisagent\src" "ZCAISAGENT_CONFIG_FILE=C:\zcaisagent\config.toml"
 nssm set zCAISAgent AppStdout "C:\zcaisagent\.zcaisagent\backend.log.out"
@@ -258,7 +258,7 @@ nssm start zCAISAgent
 
 ### 4.3 反向代理与 TLS
 
-uvicorn 只监听 `127.0.0.1:8080`，由 Nginx/Caddy 终止 TLS 并转发：
+uvicorn 只监听 `127.0.0.1:6278`，由 Nginx/Caddy 终止 TLS 并转发：
 
 ```nginx
 server {
@@ -269,7 +269,7 @@ server {
     ssl_certificate_key /etc/letsencrypt/live/agent.example.com/privkey.pem;
 
     location / {
-        proxy_pass http://127.0.0.1:8080;
+        proxy_pass http://127.0.0.1:6278;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -283,7 +283,7 @@ server {
 }
 ```
 
-- 只暴露 443；8080、5432、6379 一律留在内网。
+- 只暴露 443；6278、5432、6379 一律留在内网。
 - 如需跨域浏览器访问，在网关层配置白名单；应用本身没有注册 CORS 中间件，默认只服务同源页面。
 - 证书可用 certbot / 企业证书；HTTP 80 建议只做 301 跳转。
 

@@ -23,7 +23,7 @@ from zcaisagent.evaluation.loadtest import (  # noqa: E402 - 需先注入 src
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="zCAISAgent 并发压测与 SLO 判定")
-    parser.add_argument("--base-url", default="http://127.0.0.1:8080")
+    parser.add_argument("--base-url", default="http://127.0.0.1:6278")
     parser.add_argument("--api-key", default=os.getenv("ZCAISAGENT_API_KEY", "dev-key"))
     parser.add_argument("--concurrency", type=int, default=20)
     parser.add_argument("--requests", type=int, default=100)

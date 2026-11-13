@@ -36,7 +36,7 @@ from zcaisagent.sdk import ZCAISClient
 
 async def main() -> None:
     async with ZCAISClient(
-        "http://127.0.0.1:8080",
+        "http://127.0.0.1:6278",
         api_key="dev-key",
         timeout_s=30.0,
     ) as client:
@@ -139,7 +139,7 @@ async def trace(
 `chat_stream` 是异步生成器，逐个产出 `(event, data)`：
 
 ```python
-async with ZCAISClient("http://127.0.0.1:8080", api_key="dev-key", timeout_s=120.0) as client:
+async with ZCAISClient("http://127.0.0.1:6278", api_key="dev-key", timeout_s=120.0) as client:
     async for event, data in client.chat_stream("一线城市住宿标准是多少？", level="L1"):
         if event == "meta":
             print("run:", data["run_id"])
@@ -324,7 +324,7 @@ from zcaisagent.sdk import ZCAISClient
 
 
 async def main() -> None:
-    async with ZCAISClient("http://127.0.0.1:8080", api_key="dev-key", timeout_s=120.0) as client:
+    async with ZCAISClient("http://127.0.0.1:6278", api_key="dev-key", timeout_s=120.0) as client:
         # 1. 流式对话
         run_id = None
         async for event, data in client.chat_stream("一线城市住宿标准是多少？", level="L1"):

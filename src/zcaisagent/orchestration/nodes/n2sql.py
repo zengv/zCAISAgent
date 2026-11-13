@@ -81,6 +81,22 @@ async def n2sql_node(state: RunState, ctx: RunContext) -> StatePatch:
     if not result.ok:
         return _failed_patch(result, budget)
 
+    # 结构化结果单独推给 SSE 消费方（聊天页图表/Excel），不写入状态，避免 checkpoint 膨胀。
+    if ctx.emit is not None:
+        await ctx.emit(
+            "data_query",
+            {
+                "ok": True,
+                "sql": result.sql,
+                "columns": result.columns,
+                "rows": result.rows,
+                "row_count": len(result.rows),
+                "row_limit": result.row_limit,
+                "scope": result.scope,
+                "latency_ms": result.latency_ms,
+            },
+        )
+
     rows_json = json.dumps(result.rows, ensure_ascii=False, default=str)
     digest = hashlib.sha256((result.sql + rows_json).encode("utf-8")).hexdigest()[:10]
     evidence = Evidence(

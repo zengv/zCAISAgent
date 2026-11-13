@@ -4,7 +4,8 @@ setlocal EnableExtensions
 cd /d "%~dp0"
 
 set "HOST=127.0.0.1"
-set "PORT=8080"
+rem 默认使用 6278，避开 Windows/Hyper-V 可能保留的端口段，防止绑定时报 10013。
+set "PORT=6278"
 set "LOG=.zcaisagent\backend.log"
 
 rem 选一个装好 uvicorn + click 的 Python（避免命中残缺的解释器）

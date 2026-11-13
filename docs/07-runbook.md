@@ -72,16 +72,16 @@
 
 ```powershell
 # 健康
-Invoke-RestMethod http://127.0.0.1:8080/health
+Invoke-RestMethod http://127.0.0.1:6278/health
 
 # 指标（最近 24 小时）
-Invoke-RestMethod "http://127.0.0.1:8080/v1/admin/metrics?window=24h" -Headers @{"X-API-Key"="dev-key"}
+Invoke-RestMethod "http://127.0.0.1:6278/v1/admin/metrics?window=24h" -Headers @{"X-API-Key"="dev-key"}
 
 # 最近 50 条 Run
-Invoke-RestMethod "http://127.0.0.1:8080/v1/admin/runs?limit=50" -Headers @{"X-API-Key"="dev-key"}
+Invoke-RestMethod "http://127.0.0.1:6278/v1/admin/runs?limit=50" -Headers @{"X-API-Key"="dev-key"}
 
 # 单条轨迹
-Invoke-RestMethod "http://127.0.0.1:8080/v1/admin/runs/<run_id>/trace" -Headers @{"X-API-Key"="dev-key"}
+Invoke-RestMethod "http://127.0.0.1:6278/v1/admin/runs/<run_id>/trace" -Headers @{"X-API-Key"="dev-key"}
 
 # 审计中的拒绝事件
 Select-String -Path .zcaisagent/audit.jsonl -Pattern "admin.denied|denied"
@@ -90,7 +90,7 @@ Select-String -Path .zcaisagent/audit.jsonl -Pattern "admin.denied|denied"
 Select-String -Path .zcaisagent/trace.jsonl -Pattern "retrieve_error|retrieve_degraded"
 
 # 智能问数：按用户问一句（user_id 必须在 [[n2sql.users]] 中）
-Invoke-RestMethod -Method Post http://127.0.0.1:8080/v1/n2sql `
+Invoke-RestMethod -Method Post http://127.0.0.1:6278/v1/n2sql `
   -Headers @{"X-API-Key"="dev-key"} `
   -Body (@{question="S1 的成绩是多少？"; user_id="s_s1"} | ConvertTo-Json)
 

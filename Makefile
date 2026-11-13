@@ -4,7 +4,7 @@ export PYTHONPATH := src
 .PHONY: dev test smoke eval eval-gate perf perf-50 lint typecheck
 
 dev:
-	uvicorn zcaisagent.api.app:app --reload --host 127.0.0.1 --port 8080
+	uvicorn zcaisagent.api.app:app --reload --host 127.0.0.1 --port 6278
 
 test:
 	$(PYTHON) -m pytest

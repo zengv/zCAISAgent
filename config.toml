@@ -173,7 +173,8 @@ sql = {}
 # 连接参数缺失时 /v1/n2sql 返回 503，聊天链路不会触发数据查询。
 [n2sql]
 enabled = true
-max_rows = 100
+# 同时限制聊天返回与 Excel 导出的最大行数；返回行数达到该值时前端会提示可能截断。
+max_rows = 5000
 timeout_s = 30.0
 host_env = "ZCAISAGENT_N2SQL_HOST"
 port_env = "ZCAISAGENT_N2SQL_PORT"

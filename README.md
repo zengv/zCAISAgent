@@ -199,7 +199,7 @@ python -m zcaisagent.cli eval-gate --path data/eval/golden.jsonl  # 评估门禁
 python -m zcaisagent.cli index build                            # 构建 pgvector 索引（需启用 [database]）
 python -m zcaisagent.cli index stats                            # 查看索引块数 / 租户数 / 维度
 python -m zcaisagent.cli rerank-server --port 8090              # 本地 /v1/rerank 兼容端点
-uvicorn zcaisagent.api.app:app --reload --port 8080
+uvicorn zcaisagent.api.app:app --reload --port 6278
 ```
 
 服务启动后（另开终端）：
@@ -209,12 +209,12 @@ python scripts/loadtest.py --concurrency 20 --requests 40  # 压测并写入 dat
 python scripts/fault_drill.py                               # 四类故障演练，写入 data/drills/
 
 # 智能问数（需在 .env 配置 MySQL 连接；user_id 需存在于 [[n2sql.users]]）
-Invoke-RestMethod -Method Post http://127.0.0.1:8080/v1/n2sql `
+Invoke-RestMethod -Method Post http://127.0.0.1:6278/v1/n2sql `
   -Headers @{"X-API-Key"="dev-key"} `
   -Body (@{question="S1 的成绩是多少？"; user_id="s_s1"} | ConvertTo-Json)
 ```
 
-访问 <http://127.0.0.1:8080/studio> 打开 Studio；`loadtest.py` 默认请求 `http://127.0.0.1:8080`，
+访问 <http://127.0.0.1:6278/studio> 打开 Studio；`loadtest.py` 默认请求 `http://127.0.0.1:6278`，
 并可用 `--base-url` / `--api-key` 覆盖。
 
 配置默认从项目根目录的 `.env` 读取；普通运行参数进程环境变量优先，模型密钥则由
@@ -232,7 +232,7 @@ from zcaisagent.sdk import ZCAISClient
 
 
 async def main() -> None:
-    async with ZCAISClient("http://127.0.0.1:8080", api_key="dev-key") as client:
+    async with ZCAISClient("http://127.0.0.1:6278", api_key="dev-key") as client:
         run = await client.create_run("一线城市住宿标准是多少？", level="L1")
         print(run["status"], run["answer"])
         data = await client.ask_n2sql("S1 的成绩是多少？", user_id="s_s1")
@@ -283,10 +283,10 @@ Windows 双击 [~start-backend.bat](./~start-backend.bat)（或在项目根目�
 脚本行为：
 
 1. 依次探测 `.venv` → PATH 中的 `python` → 当前 conda 环境 → `python3`，取第一个能 `import click, uvicorn` 的解释器；
-2. 以 `uvicorn zcaisagent.api.app:app --host 127.0.0.1 --port 8080` 后台启动，`PYTHONPATH` 指向 `src`；
-3. 轮询 8080 端口，确认监听成功后打印访问地址；停止/重启按 8080 的监听进程处理，无需手动找 PID。
+2. 以 `uvicorn zcaisagent.api.app:app --host 127.0.0.1 --port 6278` 后台启动，`PYTHONPATH` 指向 `src`；
+3. 轮询 6278 端口，确认监听成功后打印访问地址；停止/重启按 6278 的监听进程处理，无需手动找 PID。
 
-启动后浏览器打开 <http://127.0.0.1:8080/>，即控制台页面：由 FastAPI 同源托管 `api/static/chat.html`，可直接多轮对话、查看答案与引用来源，无需单独启动前端。首次使用在左侧「X-API-Key」填写密钥（默认 `dev-key`，可用环境变量 `ZCAISAGENT_API_KEY` 覆盖）。
+启动后浏览器打开 <http://127.0.0.1:6278/>，即控制台页面：由 FastAPI 同源托管 `api/static/chat.html`，可直接多轮对话、查看答案与引用来源，无需单独启动前端。首次使用在左侧「X-API-Key」填写密钥（默认 `dev-key`，可用环境变量 `ZCAISAGENT_API_KEY` 覆盖）。
 
 日志：`.zcaisagent/backend.log`（stderr）与 `.zcaisagent/backend.log.out`（stdout）；启动失败时先看这里。
 
@@ -294,7 +294,7 @@ Windows 双击 [~start-backend.bat](./~start-backend.bat)（或在项目根目�
 
 ```powershell
 $env:PYTHONPATH="src"
-uvicorn zcaisagent.api.app:app --reload --port 8080
+uvicorn zcaisagent.api.app:app --reload --port 6278
 ```
 
 ***

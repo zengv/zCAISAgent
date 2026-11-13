@@ -141,6 +141,16 @@ class N2SQLResponse(BaseModel):
     latency_ms: int = 0
 
 
+class N2SQLExportRequest(BaseModel):
+    """把已经返回给前端的问数结果导出为 Excel，避免重复调用模型与数据库。"""
+
+    question: str = ""
+    columns: list[str] = Field(default_factory=list)
+    rows: list[dict] = Field(default_factory=list)
+    user_id: str = "dev"
+    tenant_id: str | None = None
+
+
 def auth_meta(request: RunRequest) -> dict:
     return {
         "tenant_id": request.tenant_id or "",

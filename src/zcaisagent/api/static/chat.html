@@ -594,6 +594,58 @@
   .step-block pre::-webkit-scrollbar { width: 6px; }
   .step-block pre::-webkit-scrollbar-thumb { background: #2c3128; border-radius: 4px; }
 
+  /* 问数图表与导出 */
+  .chart-card {
+    margin-top: 16px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 14px 16px 10px;
+  }
+
+  .chart-title {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: .12em;
+    color: var(--muted);
+    margin-bottom: 6px;
+  }
+
+  .chart-card svg { display: block; width: 100%; height: auto; }
+
+  .chart-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 16px;
+    margin-top: 8px;
+    font-size: 11px;
+    color: var(--muted);
+  }
+
+  .chart-legend i {
+    display: inline-block;
+    width: 9px;
+    height: 9px;
+    border-radius: 2px;
+    margin-right: 6px;
+  }
+
+  .chart-empty { color: var(--muted); font-size: 12px; }
+
+  .export-btn {
+    margin-top: 14px;
+    background: transparent;
+    border: 1px solid var(--gold);
+    color: var(--gold);
+    font-size: 12px;
+    padding: 8px 14px;
+    border-radius: 4px;
+    letter-spacing: .04em;
+  }
+
+  .export-btn:hover:not(:disabled) { background: var(--gold-soft); }
+  .export-btn:disabled { opacity: .6; cursor: progress; }
+
   /* 输入区 */
   .composer {
     flex: none;
@@ -603,6 +655,7 @@
   }
 
   .composer-inner {
+    position: relative;
     display: flex;
     gap: 12px;
     align-items: flex-end;
@@ -617,6 +670,60 @@
     border-color: rgba(216, 166, 87, .55);
     box-shadow: 0 0 0 3px var(--gold-soft);
   }
+
+  /* 斜杠命令菜单 */
+  .cmd-menu {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: calc(100% + 8px);
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    box-shadow: 0 16px 40px rgba(0, 0, 0, .45);
+    overflow: hidden;
+    z-index: 30;
+  }
+
+  .cmd-menu[hidden] { display: none; }
+
+  .cmd-menu-head {
+    padding: 9px 14px 7px;
+    border-bottom: 1px solid var(--line);
+    font-family: var(--mono);
+    font-size: 9.5px;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  .cmd-list { max-height: 240px; overflow-y: auto; }
+
+  .cmd-item {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    width: 100%;
+    padding: 10px 14px;
+    background: transparent;
+    border: 0;
+    border-bottom: 1px solid var(--line);
+    color: var(--ink);
+    text-align: left;
+  }
+
+  .cmd-item:last-child { border-bottom: 0; }
+  .cmd-item:hover,
+  .cmd-item.active { background: var(--gold-soft); }
+
+  .cmd-item .cmd-name {
+    flex: none;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    color: var(--gold);
+  }
+
+  .cmd-item .cmd-desc { font-size: 11.5px; color: var(--muted); }
 
   textarea {
     flex: 1;
@@ -772,11 +879,15 @@
 
   <form class="composer" id="composer">
     <div class="composer-inner">
-      <textarea id="input" rows="1" placeholder="输入问题，Enter 发送 / Shift + Enter 换行"></textarea>
+      <div class="cmd-menu" id="cmdMenu" hidden>
+        <div class="cmd-menu-head">命令</div>
+        <div class="cmd-list" id="cmdList"></div>
+      </div>
+      <textarea id="input" rows="1" placeholder="输入问题，Enter 发送 / Shift + Enter 换行；输入 / 唤起命令"></textarea>
       <button class="send" id="send" type="submit">发送</button>
     </div>
     <div class="foot">
-      <span>POST /v1/chat · SSE</span>
+      <span>POST /v1/chat · /v1/n2sql</span>
       <span id="hintLine">等待输入</span>
     </div>
     <div class="error" id="error" hidden></div>
@@ -794,9 +905,19 @@
   const errorBox = $('error');
   const hintLine = $('hintLine');
   const stageEl = $('stage');
+  const cmdMenu = $('cmdMenu');
+  const cmdList = $('cmdList');
 
   let threadId = newThreadId();
   let busy = false;
+
+  const COMMANDS = [
+    { name: '问数', desc: '自然语言查询数据库，支持图表与 Excel 导出' },
+  ];
+  let menuOpen = false;
+  let menuMatches = [];
+  let menuIndex = 0;
+  let menuQuery = '';
 
   // 恢复本地设置
   $('apiKey').value = localStorage.getItem('zcais.key') || 'dev-key';
@@ -826,12 +947,44 @@
     });
   });
 
-  input.addEventListener('input', autosize);
+  input.addEventListener('input', () => {
+    autosize();
+    updateCommandMenu();
+  });
+
   input.addEventListener('keydown', (e) => {
+    if (menuOpen && !e.isComposing) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        menuIndex = (menuIndex + 1) % menuMatches.length;
+        renderCommandMenu();
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        menuIndex = (menuIndex - 1 + menuMatches.length) % menuMatches.length;
+        renderCommandMenu();
+        return;
+      }
+      if (e.key === 'Enter' || e.key === 'Tab') {
+        e.preventDefault();
+        chooseCommand(menuMatches[menuIndex]);
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        closeCommandMenu();
+        return;
+      }
+    }
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
       $('composer').requestSubmit();
     }
+  });
+
+  document.addEventListener('click', (e) => {
+    if (menuOpen && !e.target.closest('.composer-inner')) closeCommandMenu();
   });
 
   $('composer').addEventListener('submit', (e) => {
@@ -842,6 +995,68 @@
   function autosize() {
     input.style.height = 'auto';
     input.style.height = Math.min(input.scrollHeight, 160) + 'px';
+  }
+
+  function commandQuery() {
+    const match = /^\/(\S*)$/.exec(input.value);
+    return match ? match[1] : null;
+  }
+
+  function closeCommandMenu() {
+    cmdMenu.hidden = true;
+    menuOpen = false;
+    menuMatches = [];
+    menuIndex = 0;
+    menuQuery = '';
+  }
+
+  function renderCommandMenu() {
+    cmdList.textContent = '';
+    menuMatches.forEach((command, index) => {
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'cmd-item' + (index === menuIndex ? ' active' : '');
+      item.appendChild(simpleText('span', 'cmd-name', '/' + command.name));
+      item.appendChild(simpleText('span', 'cmd-desc', command.desc));
+      item.addEventListener('mousedown', (e) => e.preventDefault());
+      item.addEventListener('click', () => chooseCommand(command));
+      cmdList.appendChild(item);
+    });
+    cmdMenu.hidden = false;
+    menuOpen = true;
+  }
+
+  function updateCommandMenu() {
+    const query = commandQuery();
+    if (query === null) {
+      closeCommandMenu();
+      return;
+    }
+    if (query !== menuQuery) {
+      menuQuery = query;
+      menuIndex = 0;
+    }
+    menuMatches = COMMANDS.filter((command) => command.name.startsWith(query));
+    if (!menuMatches.length) {
+      closeCommandMenu();
+      return;
+    }
+    renderCommandMenu();
+  }
+
+  function chooseCommand(command) {
+    input.value = '/' + command.name + ' ';
+    closeCommandMenu();
+    autosize();
+    input.focus();
+    const end = input.value.length;
+    input.setSelectionRange(end, end);
+  }
+
+  function parseCommand(value) {
+    const match = /^\/(\S+)\s*([\s\S]*)$/.exec(value);
+    if (!match) return null;
+    return { name: match[1], body: match[2].trim() };
   }
 
   function newThreadId() {
@@ -1037,9 +1252,14 @@
 
     let events = [];
     try {
-      const res = await fetch(`/v1/runs/${encodeURIComponent(runId)}/trace`, {
-        headers: { 'X-API-Key': $('apiKey').value.trim() },
+      const query = new URLSearchParams({
+        tenant_id: $('tenant').value.trim() || 'demo',
+        user_id: $('userId').value.trim() || 'web',
       });
+      const res = await fetch(
+        `/v1/runs/${encodeURIComponent(runId)}/trace?${query.toString()}`,
+        { headers: { 'X-API-Key': $('apiKey').value.trim() } }
+      );
       if (!res.ok) return;
       ({ events = [] } = await res.json());
     } catch {
@@ -1096,8 +1316,8 @@
   }
 
   async function ask() {
-    const goal = input.value.trim();
-    if (!goal || busy) return;
+    const inputText = input.value.trim();
+    if (!inputText || busy) return;
 
     const apiKey = $('apiKey').value.trim();
     if (!apiKey) {
@@ -1105,6 +1325,27 @@
       return;
     }
 
+    // 问数命令走 /v1/chat，保留 run_id、轨迹与 Studio 记录；
+    // 输出格式从命令正文识别，实际问句去掉“导出 Excel/画图”等格式词。
+    let goal = inputText;
+    let dataOutput = null;
+    let dataQuestion = '';
+    const command = parseCommand(inputText);
+    if (command) {
+      if (command.name !== '问数') {
+        showError(`未知命令：/${command.name}`);
+        return;
+      }
+      if (!command.body) {
+        showError('请在 /问数 后输入查询内容，例如：/问数 各课程平均分');
+        return;
+      }
+      dataOutput = detectOutput(command.body);
+      dataQuestion = cleanQuestion(command.body);
+      goal = `问数：${dataQuestion}`;
+    }
+
+    closeCommandMenu();
     showError('');
     busy = true;
     sendBtn.disabled = true;
@@ -1114,12 +1355,13 @@
     $('empty').hidden = true;
     input.value = '';
     autosize();
-    appendUser(goal);
+    appendUser(inputText);
     const bubble = appendAgent();
     scrollToBottom(true);
 
     let text = '';
     let charCount = 0;
+    let dataPayload = null;
 
     const render = (chunk) => {
       bubble.thinking.remove();
@@ -1159,6 +1401,8 @@
           $('mThread').textContent = threadId;
         } else if (event === 'token') {
           render(data.text || '');
+        } else if (event === 'data_query') {
+          dataPayload = data;
         } else if (event === 'stage') {
           if (data.phase === 'start' && data.node) setStage(data.node, true);
         } else if (event === 'error') {
@@ -1222,8 +1466,598 @@
         bubble.citations.appendChild(card);
       });
 
+      if (dataOutput && dataPayload && dataPayload.ok) {
+        bubble.meta.appendChild(simpleText('span', 'badge high', '智能问数'));
+        if (dataPayload.scope) {
+          bubble.meta.appendChild(simpleText('span', 'badge', `数据权限 · ${dataPayload.scope}`));
+        }
+        const dataRowCount = dataPayload.row_count ?? (dataPayload.rows || []).length;
+        const dataRowLimit = Number(dataPayload.row_limit || 0);
+        bubble.meta.appendChild(simpleText('span', 'badge', `行数 · ${dataRowCount}`));
+        if (dataRowLimit && dataRowCount >= dataRowLimit) {
+          bubble.meta.appendChild(
+            simpleText('span', 'badge warn', `已达上限 ${dataRowLimit} 行 · 可能截断`)
+          );
+        }
+        if (dataOutput.chart) {
+          appendChart(bubble.wrap, dataPayload.columns, dataPayload.rows, dataOutput.chart);
+        }
+        if (dataOutput.excel) {
+          appendExport(bubble.wrap, dataPayload, dataQuestion, apiKey);
+        }
+      }
+
       loadSteps(bubble.steps, data.run_id);
     }
+  }
+
+  // ── 问数命令：格式识别 / 图表 / Excel ──
+
+  function detectOutput(text) {
+    const excel = /excel/i.test(text);
+    let chart = null;
+    if (/饼图|占比|比例|百分比|份额/.test(text)) chart = 'pie';
+    else if (/折线图|趋势|走势|随时间/.test(text)) chart = 'line';
+    else if (/条形图/.test(text)) chart = 'hbar';
+    else if (/柱状图/.test(text)) chart = 'bar';
+    else if (/排名|排行|前\s*\d+|top\s*\d+|第几名/i.test(text)) chart = 'hbar';
+    else if (/图表|统计图|可视化|统计|分布|对比/.test(text)) chart = 'auto';
+    return { excel, chart };
+  }
+
+  // 输出格式词不该进入 SQL 生成，去掉后再问数。
+  function cleanQuestion(text) {
+    let cleaned = text
+      .replace(
+        /(?:导出|生成|输出|保存|另存)(?:为|成|到|至)?\s*excel(?:文件|表格|档)?/gi,
+        ' '
+      )
+      .replace(/excel(?:文件|表格|档)?\s*(?:导出|生成|输出|保存|另存)?/gi, ' ')
+      .replace(
+        /(?:请|帮我|麻烦)?(?:用|以|画|绘制|生成|显示|展示|输出|给我看)?\s*(?:一个|一张|一份)?\s*(?:折线图|柱状图|条形图|饼图|统计图|图表|可视化)(?:来)?(?:显示|展示|呈现|导出)?/g,
+        ' '
+      )
+      .replace(/\s+/g, ' ')
+      .replace(/^[，,。；;、\s]+|[，,。；;、\s]+$/g, '')
+      .trim();
+
+    cleaned = cleaned
+      .replace(
+        /^(?:请|帮我|麻烦)?\s*(?:把|将)?\s*(?:导出|生成|输出|保存|另存)(?:为|成|到|至)?\s*/,
+        ''
+      )
+      .replace(/^(?:请|帮我|麻烦)?\s*(?:把|将)\s*/, '')
+      .replace(/\s*(?:导出|生成|输出|保存|另存)(?:到|至|为|成)?\s*$/, '')
+      .replace(/[，,。；;、\s]*(?:到|至|为|成)\s*$/, '')
+      .replace(/[，,。；;、\s]+$/, '')
+      .trim();
+
+    return cleaned || text;
+  }
+
+  function exportStamp() {
+    const now = new Date();
+    const pad = (value) => String(value).padStart(2, '0');
+    return [
+      now.getFullYear(),
+      pad(now.getMonth() + 1),
+      pad(now.getDate()),
+      '_',
+      pad(now.getHours()),
+      pad(now.getMinutes()),
+      pad(now.getSeconds()),
+    ].join('');
+  }
+
+  function appendExport(host, data, question, apiKey) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'export-btn';
+    button.textContent = '导出 Excel';
+
+    button.addEventListener('click', async () => {
+      if (button.disabled) return;
+      button.disabled = true;
+      button.textContent = '生成中…';
+      try {
+        const response = await fetch('/v1/n2sql/export', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-API-Key': apiKey,
+          },
+          body: JSON.stringify({
+            question,
+            columns: data.columns || [],
+            rows: data.rows || [],
+            tenant_id: $('tenant').value.trim() || 'demo',
+            user_id: $('userId').value.trim() || 'web',
+          }),
+        });
+        if (!response.ok) {
+          const detail = await response.json().catch(() => ({}));
+          throw new Error(detail.detail || detail.message || `HTTP ${response.status}`);
+        }
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `问数结果_${exportStamp()}.xlsx`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1500);
+        showToast('Excel 已生成');
+      } catch (err) {
+        showError(String(err.message || err));
+      } finally {
+        button.disabled = false;
+        button.textContent = '导出 Excel';
+      }
+    });
+
+    host.appendChild(button);
+  }
+
+  const SVG_NS = 'http://www.w3.org/2000/svg';
+  const CHART_COLORS = ['#d8a657', '#8fbf6a', '#7fa6c9', '#d8735f', '#b08cc9', '#e0cf9a'];
+  const CHART_FONTS = '"Cascadia Mono", Consolas, "PingFang SC", sans-serif';
+  const CHART_TITLES = { bar: '柱状图', hbar: '排名图', line: '折线图', pie: '饼图' };
+
+  function svgEl(name, attrs) {
+    const element = document.createElementNS(SVG_NS, name);
+    if (attrs) {
+      Object.entries(attrs).forEach(([key, value]) => element.setAttribute(key, value));
+    }
+    return element;
+  }
+
+  function svgText(x, y, text, attrs) {
+    const element = svgEl(
+      'text',
+      Object.assign(
+        { x, y, fill: '#97998c', 'font-size': 11, 'font-family': CHART_FONTS },
+        attrs || {}
+      )
+    );
+    element.textContent = String(text);
+    return element;
+  }
+
+  function toNumber(value) {
+    if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+    if (value === null || value === undefined) return null;
+    const text = String(value).trim().replace(/,/g, '');
+    if (!text) return null;
+    const number = Number(text);
+    return Number.isFinite(number) ? number : null;
+  }
+
+  function formatNumber(value) {
+    if (Math.abs(value) >= 10000) return value.toLocaleString('zh-CN');
+    if (Number.isInteger(value)) return String(value);
+    return String(Math.round(value * 100) / 100);
+  }
+
+  function clipLabel(value, limit) {
+    const text = String(value);
+    const max = limit || 14;
+    return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+  }
+
+  function niceScale(maxValue, ticks) {
+    const count = ticks || 4;
+    if (!(maxValue > 0)) return { max: 1, step: 1 / count };
+    const rough = maxValue / count;
+    const base = Math.pow(10, Math.floor(Math.log10(rough)));
+    const ratio = rough / base;
+    let step = base;
+    if (ratio <= 1) step = base;
+    else if (ratio <= 2) step = 2 * base;
+    else if (ratio <= 2.5) step = 2.5 * base;
+    else if (ratio <= 5) step = 5 * base;
+    else step = 10 * base;
+    return { max: step * count, step };
+  }
+
+  function prepareChartData(columns, rows) {
+    const cols = columns && columns.length ? columns : Object.keys((rows && rows[0]) || {});
+    if (!cols.length || !rows || !rows.length) return { labels: [], series: [] };
+
+    const numeric = cols.filter((column) => {
+      let seen = false;
+      for (const row of rows) {
+        const raw = row[column];
+        if (raw === null || raw === undefined || raw === '') continue;
+        if (toNumber(raw) === null) return false;
+        seen = true;
+      }
+      return seen;
+    });
+
+    let labelColumn = cols.find((column) => !numeric.includes(column));
+    let numericColumns = numeric;
+    // 年份等维度也可能被解析成数值；首列呈时间序列时优先作为横轴。
+    if (!labelColumn && numeric.length > 1) {
+      const first = cols[0];
+      if (rows.every((row) => looksTemporal(row[first]))) {
+        labelColumn = first;
+        numericColumns = numeric.filter((column) => column !== first);
+      }
+    }
+
+    const labels = rows.map((row, index) =>
+      labelColumn ? String(row[labelColumn] ?? index + 1) : String(index + 1)
+    );
+    const series = numericColumns.slice(0, 4).map((column, index) => ({
+      name: column,
+      color: CHART_COLORS[index % CHART_COLORS.length],
+      data: rows.map((row) => toNumber(row[column]) ?? 0),
+    }));
+    return { labels, series };
+  }
+
+  function looksTemporal(label) {
+    const text = String(label).trim();
+    return /^\d{4}$|^\d{4}[-/年.]\d{1,2}([-/月.]\d{1,2})?$|^\d{1,2}月$|^第?[一二三四1-4]季度$|^Q[1-4]$/i.test(
+      text
+    );
+  }
+
+  function resolveChartType(requested, labels) {
+    if (requested && requested !== 'auto') return requested;
+    if (labels.length > 2 && labels.every(looksTemporal)) return 'line';
+    return 'bar';
+  }
+
+  function legendRow(series) {
+    const row = document.createElement('div');
+    row.className = 'chart-legend';
+    series.forEach((item) => {
+      const span = document.createElement('span');
+      const dot = document.createElement('i');
+      dot.style.background = item.color;
+      span.appendChild(dot);
+      span.appendChild(document.createTextNode(item.name));
+      row.appendChild(span);
+    });
+    return row;
+  }
+
+  function drawBarChart(prepared) {
+    const { labels, series } = prepared;
+    const width = 720;
+    const height = 340;
+    const margin = { top: 24, right: 24, bottom: 64, left: 56 };
+    const plotW = width - margin.left - margin.right;
+    const plotH = height - margin.top - margin.bottom;
+    const scale = niceScale(Math.max(...series.flatMap((item) => item.data), 0), 4);
+    const svg = svgEl('svg', { viewBox: `0 0 ${width} ${height}`, role: 'img' });
+
+    for (let i = 0; i <= 4; i += 1) {
+      const y = margin.top + plotH - (i / 4) * plotH;
+      svg.appendChild(
+        svgEl('line', {
+          x1: margin.left,
+          y1: y,
+          x2: width - margin.right,
+          y2: y,
+          stroke: '#2a2e26',
+          'stroke-width': 1,
+        })
+      );
+      svg.appendChild(
+        svgText(margin.left - 10, y + 4, formatNumber((scale.max / 4) * i), {
+          'text-anchor': 'end',
+          'font-size': 10,
+        })
+      );
+    }
+
+    const groupW = plotW / labels.length;
+    const innerW = groupW * 0.72;
+    const barW = Math.max(4, Math.min(42, innerW / series.length));
+    const rotate = labels.some((label) => label.length > 6) || labels.length > 8;
+    const labelY = margin.top + plotH + 20;
+
+    labels.forEach((label, index) => {
+      const groupX = margin.left + groupW * index + (groupW - barW * series.length) / 2;
+      series.forEach((item, seriesIndex) => {
+        const value = Math.max(0, item.data[index] || 0);
+        const barH = scale.max ? (value / scale.max) * plotH : 0;
+        const rect = svgEl('rect', {
+          x: groupX + seriesIndex * barW,
+          y: margin.top + plotH - barH,
+          width: Math.max(barW - 3, 2),
+          height: barH,
+          rx: 2,
+          fill: item.color,
+        });
+        const tip = svgEl('title');
+        tip.textContent = `${label} · ${item.name}：${formatNumber(value)}`;
+        rect.appendChild(tip);
+        svg.appendChild(rect);
+        if (series.length === 1 && labels.length <= 12 && barH > 16) {
+          svg.appendChild(
+            svgText(
+              groupX + seriesIndex * barW + (barW - 3) / 2,
+              margin.top + plotH - barH - 6,
+              formatNumber(value),
+              { 'text-anchor': 'middle', fill: '#e9e7dc', 'font-size': 10 }
+            )
+          );
+        }
+      });
+
+      const x = margin.left + groupW * index + groupW / 2;
+      const text = svgText(x, labelY, clipLabel(label, 10), {
+        'text-anchor': rotate ? 'end' : 'middle',
+        'font-size': 10,
+      });
+      if (rotate) text.setAttribute('transform', `rotate(-32 ${x} ${labelY})`);
+      svg.appendChild(text);
+    });
+
+    return svg;
+  }
+
+  function drawHorizontalBarChart(prepared) {
+    const { labels, series } = prepared;
+    const width = 720;
+    const rowH = Math.max(30, series.length * 18 + 12);
+    const top = 18;
+    const bottom = 34;
+    const left = Math.min(
+      200,
+      Math.max(80, Math.max(...labels.map((label) => String(label).length), 1) * 12)
+    );
+    const right = 64;
+    const height = Math.max(180, labels.length * rowH + top + bottom);
+    const plotW = width - left - right;
+    const plotH = labels.length * rowH;
+    const scale = niceScale(Math.max(...series.flatMap((item) => item.data), 0), 4);
+    const svg = svgEl('svg', { viewBox: `0 0 ${width} ${height}`, role: 'img' });
+
+    for (let i = 0; i <= 4; i += 1) {
+      const x = left + (i / 4) * plotW;
+      svg.appendChild(
+        svgEl('line', { x1: x, y1: top, x2: x, y2: top + plotH, stroke: '#2a2e26' })
+      );
+      svg.appendChild(
+        svgText(x, top + plotH + 18, formatNumber((scale.max / 4) * i), {
+          'text-anchor': 'middle',
+          'font-size': 10,
+        })
+      );
+    }
+
+    labels.forEach((label, index) => {
+      const centerY = top + rowH * index + rowH / 2;
+      const barH = Math.min(16, (rowH - 8) / series.length);
+      svg.appendChild(
+        svgText(left - 10, centerY + 4, clipLabel(label, 16), {
+          'text-anchor': 'end',
+          'font-size': 11,
+          fill: '#e9e7dc',
+        })
+      );
+      series.forEach((item, seriesIndex) => {
+        const value = Math.max(0, item.data[index] || 0);
+        const barW = scale.max ? (value / scale.max) * plotW : 0;
+        const rect = svgEl('rect', {
+          x: left,
+          y: centerY - (barH * series.length) / 2 + seriesIndex * barH,
+          width: Math.max(barW, 0),
+          height: Math.max(barH - 2, 2),
+          rx: 2,
+          fill: item.color,
+        });
+        const tip = svgEl('title');
+        tip.textContent = `${label} · ${item.name}：${formatNumber(value)}`;
+        rect.appendChild(tip);
+        svg.appendChild(rect);
+        if (seriesIndex === 0) {
+          svg.appendChild(
+            svgText(left + barW + 8, centerY + 4, formatNumber(value), {
+              'font-size': 10,
+              fill: '#e9e7dc',
+            })
+          );
+        }
+      });
+    });
+
+    return svg;
+  }
+
+  function drawLineChart(prepared) {
+    const { labels, series } = prepared;
+    const width = 720;
+    const height = 340;
+    const margin = { top: 24, right: 24, bottom: 64, left: 56 };
+    const plotW = width - margin.left - margin.right;
+    const plotH = height - margin.top - margin.bottom;
+    const scale = niceScale(Math.max(...series.flatMap((item) => item.data), 0), 4);
+    const svg = svgEl('svg', { viewBox: `0 0 ${width} ${height}`, role: 'img' });
+
+    for (let i = 0; i <= 4; i += 1) {
+      const y = margin.top + plotH - (i / 4) * plotH;
+      svg.appendChild(
+        svgEl('line', {
+          x1: margin.left,
+          y1: y,
+          x2: width - margin.right,
+          y2: y,
+          stroke: '#2a2e26',
+          'stroke-width': 1,
+        })
+      );
+      svg.appendChild(
+        svgText(margin.left - 10, y + 4, formatNumber((scale.max / 4) * i), {
+          'text-anchor': 'end',
+          'font-size': 10,
+        })
+      );
+    }
+
+    const pointX = (index) =>
+      labels.length > 1
+        ? margin.left + (index / (labels.length - 1)) * plotW
+        : margin.left + plotW / 2;
+    const pointY = (value) =>
+      margin.top + plotH - (scale.max ? (Math.max(0, value) / scale.max) * plotH : 0);
+    const rotate = labels.some((label) => label.length > 6) || labels.length > 8;
+    const labelY = margin.top + plotH + 20;
+
+    series.forEach((item) => {
+      const points = item.data
+        .map((value, index) => `${pointX(index)},${pointY(value)}`)
+        .join(' ');
+      svg.appendChild(
+        svgEl('polyline', {
+          points,
+          fill: 'none',
+          stroke: item.color,
+          'stroke-width': 2,
+          'stroke-linejoin': 'round',
+          'stroke-linecap': 'round',
+        })
+      );
+      item.data.forEach((value, index) => {
+        const dot = svgEl('circle', {
+          cx: pointX(index),
+          cy: pointY(value),
+          r: 3.5,
+          fill: item.color,
+          stroke: '#151812',
+          'stroke-width': 1,
+        });
+        const tip = svgEl('title');
+        tip.textContent = `${labels[index]} · ${item.name}：${formatNumber(value)}`;
+        dot.appendChild(tip);
+        svg.appendChild(dot);
+      });
+    });
+
+    labels.forEach((label, index) => {
+      const x = pointX(index);
+      const text = svgText(x, labelY, clipLabel(label, 10), {
+        'text-anchor': rotate ? 'end' : 'middle',
+        'font-size': 10,
+      });
+      if (rotate) text.setAttribute('transform', `rotate(-32 ${x} ${labelY})`);
+      svg.appendChild(text);
+    });
+
+    return svg;
+  }
+
+  function drawPieChart(prepared) {
+    const labels = prepared.labels;
+    const values = prepared.series[0].data.map((value) => Math.max(0, value));
+    const total = values.reduce((sum, value) => sum + value, 0);
+    const width = 720;
+    const height = Math.max(320, labels.length * 22 + 60);
+    const cx = 170;
+    const cy = height / 2;
+    const radius = Math.min(118, height / 2 - 24);
+    const svg = svgEl('svg', { viewBox: `0 0 ${width} ${height}`, role: 'img' });
+
+    if (!(total > 0)) {
+      svg.appendChild(
+        svgText(width / 2, height / 2, '数据为 0，无法绘制饼图', {
+          'text-anchor': 'middle',
+          'font-size': 12,
+        })
+      );
+      return svg;
+    }
+
+    let angle = -Math.PI / 2;
+    values.forEach((value, index) => {
+      const slice = (value / total) * Math.PI * 2;
+      const color = CHART_COLORS[index % CHART_COLORS.length];
+      let shape;
+      if (values.length === 1) {
+        shape = svgEl('circle', { cx, cy, r: radius, fill: color });
+      } else {
+        const x1 = cx + radius * Math.cos(angle);
+        const y1 = cy + radius * Math.sin(angle);
+        const x2 = cx + radius * Math.cos(angle + slice);
+        const y2 = cy + radius * Math.sin(angle + slice);
+        const large = slice > Math.PI ? 1 : 0;
+        shape = svgEl('path', {
+          d: `M ${cx} ${cy} L ${x1} ${y1} A ${radius} ${radius} 0 ${large} 1 ${x2} ${y2} Z`,
+          fill: color,
+          stroke: '#151812',
+          'stroke-width': 2,
+        });
+      }
+      const tip = svgEl('title');
+      tip.textContent = `${labels[index]}：${formatNumber(value)}（${(
+        (value / total) *
+        100
+      ).toFixed(1)}%）`;
+      shape.appendChild(tip);
+      svg.appendChild(shape);
+      angle += slice;
+    });
+
+    const legendX = 340;
+    const legendTop = Math.max(24, (height - labels.length * 22) / 2);
+    labels.forEach((label, index) => {
+      const y = legendTop + index * 22;
+      svg.appendChild(
+        svgEl('rect', {
+          x: legendX,
+          y: y - 8,
+          width: 9,
+          height: 9,
+          rx: 2,
+          fill: CHART_COLORS[index % CHART_COLORS.length],
+        })
+      );
+      const percent = ((values[index] / total) * 100).toFixed(1);
+      svg.appendChild(
+        svgText(
+          legendX + 16,
+          y,
+          `${clipLabel(label, 12)}  ${formatNumber(values[index])} · ${percent}%`,
+          { 'font-size': 11, fill: '#e9e7dc' }
+        )
+      );
+    });
+
+    return svg;
+  }
+
+  function appendChart(host, columns, rows, requestedType) {
+    const prepared = prepareChartData(columns, rows);
+    const type = resolveChartType(requestedType, prepared.labels);
+    const card = document.createElement('div');
+    card.className = 'chart-card';
+
+    const title = document.createElement('div');
+    title.className = 'chart-title';
+    title.textContent = `${CHART_TITLES[type] || '图表'} · ${prepared.labels.length} 项`;
+    card.appendChild(title);
+
+    if (!prepared.series.length) {
+      card.appendChild(
+        simpleText('div', 'chart-empty', '查询结果中没有可用于绘图的数值列。')
+      );
+    } else {
+      if (type === 'pie') card.appendChild(drawPieChart(prepared));
+      else if (type === 'line') card.appendChild(drawLineChart(prepared));
+      else if (type === 'hbar') card.appendChild(drawHorizontalBarChart(prepared));
+      else card.appendChild(drawBarChart(prepared));
+      if (type !== 'pie' && prepared.series.length > 1) {
+        card.appendChild(legendRow(prepared.series));
+      }
+    }
+
+    host.appendChild(card);
+    return card;
   }
 
   // 初始化

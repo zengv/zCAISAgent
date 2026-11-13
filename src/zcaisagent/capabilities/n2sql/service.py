@@ -21,6 +21,7 @@ _GENERATE_SYSTEM = (
     '{"sql": string, "explanation": string}。'
     "规则：只使用给定表和列；只输出单条 SELECT/WITH；禁止多语句、注释、DDL/DML、"
     "系统库与危险函数；多表查询必须显式 JOIN，禁止逗号连接；"
+    "除非用户明确要求“前 N 名/前 N 条”，否则不要自行添加 LIMIT，系统会统一限制行数；"
     "不要自行添加数据权限过滤，系统会在执行前强制注入。"
 )
 _ANSWER_SYSTEM = (
@@ -176,6 +177,7 @@ class N2SQLService(N2SQLPort):
             columns=columns,
             rows=rows,
             scope=scope.label,
+            row_limit=self._config.max_rows,
             tokens_in=tokens_in,
             tokens_out=tokens_out,
             cost_usd=round(cost, 6),
