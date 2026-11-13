@@ -11,7 +11,7 @@ import os
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 
 ENV_PREFIX = "ZCAISAGENT_"
 ENV_FILE = "ZCAISAGENT_ENV_FILE"
@@ -93,8 +93,18 @@ def _load_config_toml(path: Path) -> dict:
         return tomllib.load(fh)
 
 
-def _resolve_key(key_env: str, env: dict[str, str]) -> str:
-    """从合并后的 env（进程环境变量 + .env）中取密钥；无值返回空串。"""
+def _resolve_key(
+    key_env: str,
+    env: dict[str, str],
+    env_file: dict[str, str] | None = None,
+) -> str:
+    """解析 key_env：优先 .env 中的值，缺失时回退进程环境变量。"""
+    if not key_env:
+        return ""
+    if env_file is not None:
+        value = env_file.get(key_env, "")
+        if value:
+            return value
     return env.get(key_env, "")
 
 
@@ -263,6 +273,34 @@ class SkillsConfig:
 
 
 @dataclass(frozen=True)
+class N2SQLUserScope:
+    """配置文件定义的模拟用户数据范围；未知用户默认拒绝。"""
+
+    user_id: str
+    role: Literal["admin", "teacher", "student"]
+    label: str = ""
+    student_id: str = ""
+    teacher_name: str = ""
+
+
+@dataclass(frozen=True)
+class N2SQLConfig:
+    """智能问数（NL2SQL）配置；连接参数只从环境变量读取，避免密钥落盘。"""
+
+    enabled: bool = False
+    host: str = ""
+    port: int = 3306
+    user: str = ""
+    password: str = ""
+    database: str = ""
+    schema: str = ""
+    tables: list[str] = field(default_factory=list)
+    max_rows: int = 100
+    timeout_s: float = 5.0
+    users: dict[str, N2SQLUserScope] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class CheckpointConfig:
     """检查点持久化配置：默认 JSONL + 压缩索引，可选 Postgres。"""
 
@@ -286,7 +324,11 @@ def _env_list(name: str) -> list[str] | None:
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
-def _build_providers(cfg: dict, env: dict[str, str]) -> dict[str, ModelProvider]:
+def _build_providers(
+    cfg: dict,
+    env: dict[str, str],
+    env_file: dict[str, str] | None = None,
+) -> dict[str, ModelProvider]:
     raw = cfg.get("model_providers", {}) or {}
     providers: dict[str, ModelProvider] = {}
     for pid, body in raw.items():
@@ -295,7 +337,7 @@ def _build_providers(cfg: dict, env: dict[str, str]) -> dict[str, ModelProvider]
             name=body.get("name", pid),
             model=body["model"],
             base_url=body["base_url"].rstrip("/"),
-            api_key=_resolve_key(body.get("key_env", ""), env),
+            api_key=_resolve_key(body.get("key_env", ""), env, env_file),
             context_window=int(body.get("context_window", 0)),
             reasoning_effort=body.get("reasoning_effort", "low"),
             cost_in=float(body.get("cost_in", 0) or 0),
@@ -375,6 +417,9 @@ class Settings:
     parent_max_chars: int = 1800
     # 合成阶段证据正文的 token 预算（配合父块扩展防止上下文膨胀）。
     max_context_tokens: int = 6000
+    # 知识库文档 ACL：默认 token + 按文件名覆盖（如 it_support.md → it_support）。
+    seed_acl_default: list[str] = field(default_factory=lambda: ["public"])
+    seed_acl_by_file: dict[str, list[str]] = field(default_factory=dict)
     # pgvector 持久化；None 表示未启用（纯内存，行为与旧版一致）。
     database: DatabaseConfig | None = None
 
@@ -388,6 +433,8 @@ class Settings:
     secret: SecretConfig | None = None
     # Studio 看板读取的评估报告 / 门禁 / 基线路径。
     studio: StudioConfig = field(default_factory=StudioConfig)
+    # 智能问数（NL2SQL）；None 表示未配置。
+    n2sql: N2SQLConfig | None = None
     # 可观测 / 语义校验 / 技能目录 / 检查点。
     observability: ObservabilityConfig = field(default_factory=ObservabilityConfig)
     guardrail: GuardrailConfig = field(default_factory=GuardrailConfig)
@@ -440,8 +487,10 @@ class Settings:
     ) -> Settings:
         # 先读 .env，再让进程环境变量覆盖
         env_path = Path(env_file).expanduser() if env_file else _default_env_file()
-        env = _load_env_file(env_path)
-        env.update(os.environ)  # 进程环境变量全部覆盖 .env
+        env_file_values = _load_env_file(env_path)
+        env = dict(env_file_values)
+        # 普通配置仍由进程环境变量覆盖 .env；模型密钥走 _resolve_key（.env 优先）。
+        env.update(os.environ)
 
         # config.toml
         cfg_path = (
@@ -449,7 +498,7 @@ class Settings:
         )
         cfg = _load_config_toml(cfg_path)
 
-        providers = _build_providers(cfg, env)
+        providers = _build_providers(cfg, env, env_file_values)
         purpose_effort: dict[str, Effort] = dict(cfg.get("purpose_effort", {}) or {})
         effort_levels: list[Effort] = list(cfg.get("effort_levels") or ["low", "high", "max"])
         default_provider_id = cfg.get("model_provider", "")
@@ -465,7 +514,9 @@ class Settings:
             embedding = EmbeddingConfig(
                 model=raw_embedding["model"],
                 base_url=raw_embedding["base_url"].rstrip("/"),
-                api_key=_resolve_key(raw_embedding.get("key_env", ""), env),
+                api_key=_resolve_key(
+                    raw_embedding.get("key_env", ""), env, env_file_values
+                ),
             )
         rerank_enabled = bool((cfg.get("rerank", {}) or {}).get("enabled", False))
         if os.getenv(f"{ENV_PREFIX}RERANK_ENABLED"):
@@ -483,6 +534,13 @@ class Settings:
             ).lower() in {"1", "true", "yes"}
         parent_max_chars = int(raw_retrieval.get("parent_max_chars", 1800))
         max_context_tokens = int(raw_retrieval.get("max_context_tokens", 6000))
+        seed_acl_default = [
+            str(item) for item in (raw_retrieval.get("acl_default") or ["public"])
+        ]
+        seed_acl_by_file = {
+            str(name): [str(token) for token in (tokens or [])]
+            for name, tokens in (raw_retrieval.get("acl_by_file") or {}).items()
+        }
 
         # pgvector 持久化：连接失败由容器回退内存，这里只负责装配配置。
         database: DatabaseConfig | None = None
@@ -508,7 +566,9 @@ class Settings:
             rerank = RerankConfig(
                 model=raw_rerank["model"],
                 base_url=raw_rerank["base_url"],
-                api_key=_resolve_key(raw_rerank.get("key_env", ""), env),
+                api_key=_resolve_key(
+                    raw_rerank.get("key_env", ""), env, env_file_values
+                ),
                 style=str(raw_rerank.get("style", "dashscope")),
             )
 
@@ -764,6 +824,61 @@ class Settings:
             ),
         )
 
+        # [n2sql]：连接参数走 *_env 指向的环境变量；password 只接受环境变量。
+        raw_n2sql = cfg.get("n2sql")
+        n2sql: N2SQLConfig | None = None
+        if raw_n2sql is not None:
+            def _env_value(env_name: str) -> str:
+                # 兼容 "N2SQL_HOST" 与项目统一的 "ZCAISAGENT_N2SQL_HOST" 两种写法。
+                if not env_name:
+                    return ""
+                value = env.get(env_name, "")
+                if value or env_name.startswith(ENV_PREFIX):
+                    return value
+                return env.get(f"{ENV_PREFIX}{env_name}", "")
+
+            def _conn_value(field_name: str, default: str = "") -> str:
+                return _env_value(str(raw_n2sql.get(field_name) or "")) or default
+
+            users: dict[str, N2SQLUserScope] = {}
+            for item in raw_n2sql.get("users", []) or []:
+                if not isinstance(item, dict):
+                    continue
+                user_id = str(item.get("user_id") or "").strip()
+                role = str(item.get("role") or "")
+                if not user_id or role not in {"admin", "teacher", "student"}:
+                    continue
+                users[user_id] = N2SQLUserScope(
+                    user_id=user_id,
+                    role=cast('Literal["admin", "teacher", "student"]', role),
+                    label=str(item.get("label") or user_id),
+                    student_id=str(item.get("student_id") or ""),
+                    teacher_name=str(item.get("teacher_name") or ""),
+                )
+            port_env = str(raw_n2sql.get("port_env") or "")
+            n2sql = N2SQLConfig(
+                enabled=_env_flag(
+                    f"{ENV_PREFIX}N2SQL_ENABLED",
+                    bool(raw_n2sql.get("enabled", False)),
+                ),
+                host=_conn_value("host_env"),
+                port=int(_env_value(port_env) or raw_n2sql.get("port", 3306)),
+                user=_conn_value("user_env"),
+                password=_conn_value("password_env"),
+                database=_conn_value("database_env"),
+                schema=str(raw_n2sql.get("schema") or ""),
+                tables=[str(item) for item in raw_n2sql.get("tables", []) or []],
+                max_rows=int(
+                    env.get(f"{ENV_PREFIX}N2SQL_MAX_ROWS", raw_n2sql.get("max_rows", 100))
+                ),
+                timeout_s=float(
+                    env.get(
+                        f"{ENV_PREFIX}N2SQL_TIMEOUT_S", raw_n2sql.get("timeout_s", 5.0)
+                    )
+                ),
+                users=users,
+            )
+
         raw_secret = cfg.get("secret")
         secret: SecretConfig | None = None
         if raw_secret is not None:
@@ -793,6 +908,8 @@ class Settings:
             parent_child_enabled=parent_child_enabled,
             parent_max_chars=parent_max_chars,
             max_context_tokens=max_context_tokens,
+            seed_acl_default=seed_acl_default,
+            seed_acl_by_file=seed_acl_by_file,
             database=database,
             security=security,
             tools=tools,
@@ -802,6 +919,7 @@ class Settings:
             events=events,
             secret=secret,
             studio=studio,
+            n2sql=n2sql,
             observability=observability,
             guardrail=guardrail,
             evaluator=evaluator,

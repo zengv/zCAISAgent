@@ -27,5 +27,6 @@ htmlcov/
 .vscode/
 .DS_Store
 .trae/
+.trae-html-share-packages/
 Thumbs.db
 *.log

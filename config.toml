@@ -59,6 +59,12 @@ hyde_max_tokens = 256
 parent_child_enabled = false
 parent_max_chars = 1800
 max_context_tokens = 6000
+# 知识库文档 ACL：默认 public；按文件名覆盖，配合 [security].acl_tokens_by_role
+# 实现角色可见范围（admin=全部，teacher=除 it_support 外，student=仅 it_support）。
+acl_default = ["public"]
+
+[retrieval.acl_by_file]
+"it_support.md" = ["it_support"]
 
 # —— pgvector 持久化 ——
 # enabled=true 时启动阶段连接 Postgres 并加载 chunks；连接失败自动回退内存。
@@ -69,7 +75,7 @@ dsn_env = "ZCAISAGENT_DATABASE_URL"
 dimensions = 1024
 
 # —— 模型提供者定义 ——
-# key_env 是环境变量名，启动时从系统环境或 .env 里读取实际密钥；
+# key_env 是环境变量名，启动时优先从 .env 读取实际密钥，缺失时回退系统环境变量；
 # base_url 必须不带尾部 `/`，适配器内部会补。
 # cost_in / cost_out 为单价（$/1M tokens），用于成本计量；0 表示未配置，
 # 回退全局 ZCAISAGENT_INPUT/OUTPUT_PRICE_PER_MTOK。以下为示例单价，请按账单修改。
@@ -139,8 +145,9 @@ cost_out = 2.40
 # identity 取值 api_key / oidc；OIDC 走 introspection，客户端密钥只从环境变量读取。
 [security]
 identity = "api_key"
-roles = { support = ["retrieve", "tool:read", "run:create"], admin = ["retrieve", "tool:read", "tool:write", "run:create", "run:approve", "admin:read", "admin:write"] }
-acl_tokens_by_role = { support = ["public"], admin = ["public", "finance"] }
+# 模拟用户角色由 [[n2sql.users]] 的 user_id → role 映射决定；未配置用户默认无角色（拒绝）。
+roles = { support = ["retrieve", "tool:read", "run:create"], teacher = ["retrieve", "tool:read", "run:create"], student = ["retrieve", "tool:read", "run:create"], admin = ["retrieve", "tool:read", "tool:write", "run:create", "run:approve", "admin:read", "admin:write"] }
+acl_tokens_by_role = { support = ["public"], teacher = ["public"], student = ["it_support"], admin = ["public", "finance", "it_support"] }
 
 [security.oidc]
 introspection_url = ""
@@ -160,6 +167,84 @@ enable_ticket = false
 mcp_servers = []
 openapi = {}
 sql = {}
+
+# —— 智能问数（NL2SQL） ——
+# MySQL 连接只从 *_env 指向的环境变量读取；password 仅接受环境变量，避免密钥进入 git。
+# 连接参数缺失时 /v1/n2sql 返回 503，聊天链路不会触发数据查询。
+[n2sql]
+enabled = true
+max_rows = 100
+timeout_s = 30.0
+host_env = "ZCAISAGENT_N2SQL_HOST"
+port_env = "ZCAISAGENT_N2SQL_PORT"
+user_env = "ZCAISAGENT_N2SQL_USER"
+password_env = "ZCAISAGENT_N2SQL_PASSWORD"
+database_env = "ZCAISAGENT_N2SQL_DATABASE"
+tables = ["courses", "students", "scores"]
+schema = """
+-- 课程表
+CREATE TABLE courses (
+  courseID CHAR(10) NOT NULL PRIMARY KEY COMMENT '课程ID',
+  courseName VARCHAR(50) NOT NULL COMMENT '课程名称',
+  courseTeacher VARCHAR(50) NOT NULL COMMENT '课程老师'
+) COMMENT='课程信息表';
+-- 学生表
+CREATE TABLE students (
+  studentID CHAR(10) NOT NULL PRIMARY KEY COMMENT '学生ID',
+  studentName VARCHAR(50) NOT NULL COMMENT '学生姓名',
+  studentSex ENUM('男', '女') NOT NULL COMMENT '性别'
+) COMMENT='学生信息表';
+-- 成绩表
+CREATE TABLE scores (
+  scoreID CHAR(36) NOT NULL PRIMARY KEY COMMENT '成绩唯一标识',
+  courseID CHAR(10) NOT NULL COMMENT '课程ID',
+  studentID CHAR(10) NOT NULL COMMENT '学生ID',
+  scoreYear YEAR NOT NULL COMMENT '考试年度',
+  score DECIMAL(5,1) NOT NULL COMMENT '考试分数'
+) COMMENT='学生成绩记录表';
+"""
+
+# —— 模拟用户 → 数据可见范围（未知 user_id 默认拒绝） ——
+# role=admin 不限制；teacher 按 teacher_name 限定本人课程；
+# student 按 student_id 限定本人成绩。过滤条件由服务端强制注入，模型无法绕过。
+[[n2sql.users]]
+user_id = "dev"
+role = "admin"
+label = "管理员"
+
+[[n2sql.users]]
+user_id = "u_admin"
+role = "admin"
+label = "管理员"
+
+[[n2sql.users]]
+user_id = "web"
+role = "admin"
+label = "Web 控制台"
+
+[[n2sql.users]]
+user_id = "t_liang"
+role = "teacher"
+label = "梁文锋（教师）"
+teacher_name = "梁文锋"
+
+[[n2sql.users]]
+user_id = "t_li"
+role = "teacher"
+label = "李沐（教师）"
+teacher_name = "李沐"
+
+[[n2sql.users]]
+user_id = "s_s1"
+role = "student"
+label = "高圆圆（学生）"
+student_id = "S1"
+
+[[n2sql.users]]
+user_id = "s_s10"
+role = "student"
+label = "张昕懿（学生）"
+student_id = "S10"
 
 # [memory] 三类记忆；working 由 RunState 承担，episodic/semantic/procedural 落进程内存储。
 # ttl_s=0 表示不过期；环境变量 ZCAISAGENT_MEMORY_ENABLED /

@@ -284,6 +284,21 @@ class ZCAISClient:
         self._raise_for_status(response)
         return response.json()
 
+    async def ask_n2sql(
+        self,
+        question: str,
+        *,
+        user_id: str = "dev",
+        tenant_id: str | None = None,
+    ) -> dict:
+        """POST /v1/n2sql，返回答案、SQL、结果列与结果行。"""
+        payload: dict[str, Any] = {"question": question, "user_id": user_id}
+        if tenant_id is not None:
+            payload["tenant_id"] = tenant_id
+        response = await self._http.post(f"{self.base_url}/v1/n2sql", json=payload)
+        self._raise_for_status(response)
+        return response.json()
+
     async def chat_stream(
         self,
         goal: str,

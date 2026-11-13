@@ -1,12 +1,13 @@
 import json
 import re
+import time
 
 from zcaisagent.capabilities.conversation.context import resolve_followup
 from zcaisagent.domain.enums import AutonomyLevel, MemoryKind
 from zcaisagent.domain.models import Message, RunState
 from zcaisagent.domain.patch import StatePatch
 from zcaisagent.orchestration.runtime import RunContext
-from zcaisagent.orchestration.telemetry import emit
+from zcaisagent.orchestration.telemetry import emit, llm_call_record
 from zcaisagent.ports.llm import LLMRequest
 from zcaisagent.ports.memory import MemoryQuery
 
@@ -59,6 +60,20 @@ _MULTI_HOP_MARKERS = ("分别", "以及", "和", "与", "还有", "、", "；", 
 _DERIVED_MARKERS = ("合计", "相差", "应发", "共计", "总计", "累计", "之和", "差额")
 _TEMPORAL_MARKERS = ("最晚", "截止", "到期", "起算", "之前", "前提交", "前确认")
 _DATE_PATTERN = re.compile(r"\d{1,2}\s*月\s*\d{1,2}\s*日|\d{4}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日")
+# 智能问数意图：学科数据主题 + 统计/查询动作，避免把“课程怎么申请”误判为查数。
+_DATA_SUBJECTS = ("学生", "课程", "成绩", "分数", "老师", "教师")
+_DATA_METRICS = (
+    "多少", "几个", "几门", "平均", "最高", "最低", "排名", "统计", "名单",
+    "及格", "挂科", "总分", "人数", "数量", "分布", "查询", "列出", "查一下",
+)
+_DATA_TABLES = ("courses", "students", "scores")
+# 显式“问数”触发词；强指标无需再出现“学生/课程”等主题词。
+_DATA_TRIGGERS = ("问数",)
+_DATA_STRONG_METRICS = (
+    "排名", "平均分", "及格率", "最高分", "最低分", "总分", "成绩分布",
+    "前10名", "前十名", "前10", "前十", "第几名",
+)
+_CLEAN_TRIGGER = re.compile(r"^\s*(?:智能问数|问数)\s*[:：,，]?\s*")
 
 _INTENTS = {"闲聊", "查事实", "对比", "操作指引", "分析", "不安全"}
 _COMPLEXITIES = {"simple", "multi_hop", "open"}
@@ -144,6 +159,24 @@ def _rule_analysis(goal: str) -> dict:
     }
 
 
+def _is_data_query(goal: str) -> bool:
+    lowered = goal.lower()
+    if any(marker in goal for marker in _DATA_TRIGGERS):
+        return True
+    if any(marker in lowered for marker in _DATA_TABLES):
+        return True
+    if any(marker in goal for marker in _DATA_STRONG_METRICS):
+        return True
+    has_subject = any(marker in goal for marker in _DATA_SUBJECTS)
+    return has_subject and any(marker in goal for marker in _DATA_METRICS)
+
+
+def _data_query_text(goal: str) -> str:
+    """去掉“问数：”前缀，避免触发词干扰 SQL 生成。"""
+    cleaned = _CLEAN_TRIGGER.sub("", goal).strip()
+    return cleaned or goal
+
+
 def _level_for(analysis: dict) -> AutonomyLevel:
     if analysis["intent"] == "闲聊":
         return AutonomyLevel.L0_DIRECT
@@ -193,6 +226,7 @@ async def _model_analysis(
         purpose="analyze",
     )
     try:
+        started = time.perf_counter()
         response = await ctx.llm.complete(request)
     except Exception:  # noqa: BLE001 - analysis must never fail a run
         return None, None
@@ -201,11 +235,7 @@ async def _model_analysis(
         state,
         "llm.called",
         node="analyze",
-        data={
-            "purpose": "analyze",
-            "tokens": response.tokens_in + response.tokens_out,
-            "cost_usd": round(response.cost_usd, 6),
-        },
+        data=llm_call_record(request, response, started),
     )
     match = re.search(r"\{.*\}", response.text, re.S)
     if not match:
@@ -264,6 +294,16 @@ async def analyze_node(state: RunState, ctx: RunContext) -> StatePatch:
         f"analyzed:{analysis['intent']}/{analysis['complexity']}",
         f"route_basis:{analysis['basis']}",
     ]
+    if (
+        getattr(ctx, "n2sql", None) is not None
+        and analysis["intent"] != "不安全"
+        and _is_data_query(state.goal)
+    ):
+        analysis["data_query"] = True
+        cleaned = _data_query_text(state.goal)
+        if cleaned != state.goal:
+            analysis["data_query_text"] = cleaned
+        notes.append("n2sql:detected")
     if ctx.skills is not None:
         decision = ctx.skills.match(state.goal, analysis["intent"], ctx.auth.scopes)
         if decision.skill is not None:

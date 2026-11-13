@@ -58,6 +58,7 @@ zCAISAgent/
 │   │   ├── skills.py               # SkillRegistryPort
 │   │   ├── scheduler.py            # SchedulerPort
 │   │   ├── security.py             # Identity / Policy / Guardrail / Audit / Secret
+│   │   ├── n2sql.py                # N2SQLPort / SqlQueryPort
 │   │   └── mcp_server.py           # McpServerPort（对外暴露，默认关闭）
 │   │
 │   ├── orchestration/              # ③ 编排层
@@ -74,6 +75,7 @@ zCAISAgent/
 │   │   │   ├── rewrite.py
 │   │   │   ├── source_route.py
 │   │   │   ├── retrieve.py         # 多源并行
+│   │   │   ├── n2sql.py            # 智能问数：SQL 生成/只读校验/行级过滤/执行
 │   │   │   ├── grade.py            # 证据评分 + 充分性
 │   │   │   ├── synthesize.py       # 证据约束生成
 │   │   │   ├── verify.py           # claim 级校验
@@ -111,6 +113,11 @@ zCAISAgent/
 │   │   │   ├── file_ops.py
 │   │   │   ├── browser.py
 │   │   │   └── sandbox.py
+│   │   ├── n2sql/                   # 智能问数（NL2SQL）
+│   │   │   ├── service.py           # 生成 → 校验 → 行级过滤 → 执行 → 归纳
+│   │   │   ├── sql_guard.py         # 只读校验 / 表白名单 / 行级条件注入 / LIMIT
+│   │   │   ├── permissions.py       # user_id → DataScope
+│   │   │   └── errors.py
 │   │   ├── memory/
 │   │   │   ├── working.py
 │   │   │   ├── episodic.py
@@ -156,6 +163,7 @@ zCAISAgent/
 │   │   ├── store/
 │   │   │   ├── postgres.py
 │   │   │   ├── pgvector.py
+│   │   │   ├── mysql.py            # 智能问数只读 MySQL 客户端
 │   │   │   └── fts.py
 │   │   ├── cache/redis.py
 │   │   ├── trace/otel.py
@@ -187,6 +195,7 @@ zCAISAgent/
 │   │       ├── runs.py             # 创建/查询/恢复/取消
 │   │       ├── threads.py
 │   │       ├── admin.py            # 数据源/配置/权限
+│   │       ├── n2sql.py            # 智能问数 HTTP 入口
 │   │       ├── eval.py
 │   │       └── feedback.py
 │   │
@@ -423,6 +432,19 @@ layers =
 
 **验收**：越权召回 = 0；注入红队通过率 ≥ 90%；审计可按 run_id 追溯；更换认证方式不改内核代码。
 
+### 3.10 Recipe J：接入新的数据查询能力（以 NL2SQL 为例）
+
+| 步骤 | 动作 |
+|---|---|
+| 1 | 实现 `SqlQueryPort.execute(sql, max_rows)`：只读连接、超时、`fetchmany` 行数上限、结果 JSON 化 |
+| 2 | 在 `capabilities/n2sql/sql_guard.py` 定义只读校验与**表级/行级**规则，禁止把权限判断交给模型 |
+| 3 | 在 `permissions.py` 把 `AuthContext` 映射为 `DataScope`；未知用户返回 `None` 并拒绝 |
+| 4 | 用 `N2SQLService` 串联"生成 → 校验 → 权限注入 → LIMIT → 执行 → 归纳"，每次查询写审计 |
+| 5 | 用 `[[n2sql.users]]` 配置用户目录；连接参数只从 `*_env` 读取 |
+| 6 | 测试：只读/多语句/注释/越白名单/绕过过滤/未知用户/行数上限/数据库失败 全部覆盖 |
+
+**验收**：模型生成的 SQL 无法绕过行级过滤；未知用户与越权查询 100% 拒绝；查询结果可回溯到 SQL 与数据范围。
+
 ---
 
 ## 4. 开发顺序与里程碑
@@ -508,6 +530,7 @@ layers =
 | 4 | 压测与容量规划 | 20/50 并发 | P95 达标 |
 | 5 | 故障演练（模型/检索/DB/Redis） | 降级生效 | 演练报告 |
 | 6 | 部署文档 + 运维手册 + SDK | 可交付 | 新人按文档可部署 |
+| 7 | 智能问数（NL2SQL）+ 查询数据权限 | 自然语言查库 + 行级范围 | 只读/越权/审计测试全通过 |
 
 **M3 DoD**：可交付客户试用；CI 门禁生效；故障演练通过；文档齐全。
 
@@ -558,6 +581,10 @@ test_acl_filter_applied_before_retrieval
 test_stream_cancel_releases_resources
 test_runtime_resume_from_checkpoint
 test_eval_gate_blocks_regression
+test_n2sql_service_rejects_unknown_user
+test_n2sql_sql_guard_blocks_write_and_bypass
+test_n2sql_api_returns_scoped_rows
+test_doc_acl_filters_before_retrieval
 ```
 
 ### 5.2 CI 流水线
@@ -637,6 +664,11 @@ stages:
 - **背景**：M0 的 `/health` 只返回进程存活，无法定位 LLM/检索/检查点哪一环坏了。
 - **决策**：每个部件注册一个健康项、单一写入者；Runtime 节点失败时置 `down`；`/health` 返回组件级状态与消息。
 - **后果**：排障从"服务活着"升级为"哪个部件坏了"；后续可扩展为连续失败计数、按 Source/模型分项。
+
+### ADR-013：NL2SQL 采用"模型生成 + 运行时强制约束"
+- **背景**：智能问数需要模型理解"问题 → 表/列"，但让模型直接执行 SQL 会带来写操作、越权、慢查询与不可审计风险。
+- **决策**：模型只负责生成 SQL；运行时强制执行单条只读校验、表白名单、危险关键字/对象黑名单、自动 `LIMIT`，并在执行前把白名单表改写为带行级 `WHERE` 的派生表。权限来自 `[[n2sql.users]]` 静态目录，未知用户直接拒绝。
+- **后果**：模型无法通过提示词绕过数据权限；代价是 SQL 形态受白名单限制（复杂跨库查询需扩展 `tables` 与 `_predicate`）；所有查询写 `n2sql.query` 审计，可回溯 SQL 摘要与数据范围。
 
 ---
 

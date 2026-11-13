@@ -1,14 +1,19 @@
 import asyncio
 import hashlib
 import json
+import time
 
 from zcaisagent.capabilities.retrieval.fusion import rrf_fuse, source_weight
-from zcaisagent.capabilities.retrieval.rewrite import hyde_variant, rewrite_queries
+from zcaisagent.capabilities.retrieval.rewrite import (
+    hyde_request,
+    hyde_variant,
+    rewrite_queries,
+)
 from zcaisagent.capabilities.skills.registry import allowed_sources
 from zcaisagent.domain.models import Evidence, RunState
 from zcaisagent.domain.patch import StatePatch
 from zcaisagent.orchestration.runtime import RunContext
-from zcaisagent.orchestration.telemetry import emit
+from zcaisagent.orchestration.telemetry import emit, llm_call_record
 from zcaisagent.ports.retrieval import RetrieveRequest, RetrieveResult
 from zcaisagent.ports.security import AuditEvent
 
@@ -49,6 +54,12 @@ async def retrieve_node(state: RunState, ctx: RunContext) -> StatePatch:
             getattr(ctx.config, "hyde_enabled", False)
             and state.analysis.get("complexity") in {"open"}
         ):
+            hyde_req = hyde_request(
+                base,
+                timeout_s=ctx.node_timeout_s,
+                max_tokens=int(getattr(ctx.config, "hyde_max_tokens", 256)),
+            )
+            started = time.perf_counter()
             response = await hyde_variant(
                 ctx.llm,
                 base,
@@ -56,6 +67,13 @@ async def retrieve_node(state: RunState, ctx: RunContext) -> StatePatch:
                 max_tokens=int(getattr(ctx.config, "hyde_max_tokens", 256)),
             )
             if response is not None:
+                await emit(
+                    ctx,
+                    state,
+                    "llm.called",
+                    node="retrieve",
+                    data=llm_call_record(hyde_req, response, started),
+                )
                 variants.append({"strategy": "hyde", "query": response.text.strip()})
                 budget = budget.model_copy(
                     update={

@@ -1,12 +1,13 @@
 import json
 import re
+import time
 
 from zcaisagent.capabilities.retrieval.context_pack import pack as pack_evidence
 from zcaisagent.domain.enums import AutonomyLevel
 from zcaisagent.domain.models import Answer, Budget, Claim, Message, RunState
 from zcaisagent.domain.patch import StatePatch
 from zcaisagent.orchestration.runtime import RunContext
-from zcaisagent.orchestration.telemetry import emit
+from zcaisagent.orchestration.telemetry import emit, llm_call_record
 from zcaisagent.ports.llm import LLMRequest, LLMResponse
 
 _SYSTEM = (
@@ -215,6 +216,11 @@ def _needs_retry(answer: Answer) -> bool:
     return not answer.text.strip() or not answer.claims
 
 
+def _disable_thinking(level: AutonomyLevel) -> bool:
+    """L1 快路径关闭思考：答案短、证据已收敛，思考 token 是主要延迟来源。"""
+    return level == AutonomyLevel.L1_FAST
+
+
 def _charge(budget: Budget, response: LLMResponse) -> Budget:
     return budget.model_copy(
         update={
@@ -250,30 +256,18 @@ async def synthesize_node(state: RunState, ctx: RunContext) -> StatePatch:
         f"资料：\n{_evidence_block(evidence)}\n\n"
         "请基于资料作答，并给出 claims 与 evidence_ids。"
     )
-    if getattr(ctx, "emit", None) is not None:
+    # L1 快路径一次输出完整 JSON：省掉「流式正文 + claims 抽取」的二次串行调用；
+    # L2/L3 保留流式正文，改善长回答的体感延迟。
+    if state.level != AutonomyLevel.L1_FAST and getattr(ctx, "emit", None) is not None:
         try:
-            patch = await _streaming_synthesize(state, ctx, evidence, system, prompt)
+            patch, records = await _streaming_synthesize(state, ctx, evidence, system, prompt)
         except _StreamFallback as exc:
-            patch = await _complete_synthesize(state, ctx, system, prompt)
+            patch, records = await _complete_synthesize(state, ctx, system, prompt)
             patch.append_notes = [*patch.append_notes, f"stream_fallback:{exc}"]
     else:
-        patch = await _complete_synthesize(state, ctx, system, prompt)
-    delta_tokens = 0
-    delta_cost = 0.0
-    if patch.budget is not None:
-        delta_tokens = patch.budget.used_tokens - state.budget.used_tokens
-        delta_cost = patch.budget.used_cost_usd - state.budget.used_cost_usd
-    await emit(
-        ctx,
-        state,
-        "llm.called",
-        node="synthesize",
-        data={
-            "purpose": "synthesize",
-            "tokens": delta_tokens,
-            "cost_usd": round(delta_cost, 6),
-        },
-    )
+        patch, records = await _complete_synthesize(state, ctx, system, prompt)
+    for record in records:
+        await emit(ctx, state, "llm.called", node="synthesize", data=record)
     if memory_notes:
         patch.append_notes = [*patch.append_notes, *memory_notes]
     return patch
@@ -281,22 +275,22 @@ async def synthesize_node(state: RunState, ctx: RunContext) -> StatePatch:
 
 async def _complete_synthesize(
     state: RunState, ctx: RunContext, system: str, prompt: str
-) -> StatePatch:
+) -> tuple[StatePatch, list[dict]]:
     messages = [
         Message(role="system", content=system),
         Message(role="user", content=prompt),
     ]
-    response = await ctx.llm.complete(
-        LLMRequest(
-            messages=messages,
-
-            purpose="synthesize",
-            max_tokens=_max_tokens(state.level),
-            timeout_s=_timeout_s(
-                state.level, getattr(ctx.config, "node_timeout_s", None)
-            ),
-        )
+    request = LLMRequest(
+        messages=messages,
+        purpose="synthesize",
+        max_tokens=_max_tokens(state.level),
+        timeout_s=_timeout_s(state.level, getattr(ctx.config, "node_timeout_s", None)),
+        disable_thinking=_disable_thinking(state.level),
     )
+    records: list[dict] = []
+    started = time.perf_counter()
+    response = await ctx.llm.complete(request)
+    records.append(llm_call_record(request, response, started))
     budget = _charge(state.budget, response)
     answer = _parse_answer(response.text)
     notes = ["synthesized"]
@@ -305,57 +299,61 @@ async def _complete_synthesize(
     # 正常路径不触发，不会随修复轮数线性放大。
     while retries < _MAX_RETRIES and _needs_retry(answer):
         reason = "empty" if not response.text.strip() else "unparsed"
-        retry_messages = [
-            *messages,
-            Message(
-                role="user",
-                content="上次输出为空或不是完整 JSON。请只输出一个完整、合法的 JSON 对象，"
-                "不要输出其他文字；answer 与 claims（含 evidence_ids）必须齐全。",
-            ),
-        ]
-        response = await ctx.llm.complete(
-            LLMRequest(
-                messages=retry_messages,
-    
-                purpose="synthesize_retry",
-                max_tokens=_max_tokens(state.level, retry=True),
-                timeout_s=_timeout_s(
-                    state.level, getattr(ctx.config, "node_timeout_s", None)
+        retry_request = LLMRequest(
+            messages=[
+                *messages,
+                Message(
+                    role="user",
+                    content="上次输出为空或不是完整 JSON。请只输出一个完整、合法的 JSON 对象，"
+                    "不要输出其他文字；answer 与 claims（含 evidence_ids）必须齐全。",
                 ),
-            )
+            ],
+            purpose="synthesize_retry",
+            max_tokens=_max_tokens(state.level, retry=True),
+            timeout_s=_timeout_s(
+                state.level, getattr(ctx.config, "node_timeout_s", None)
+            ),
+            disable_thinking=_disable_thinking(state.level),
         )
+        started = time.perf_counter()
+        response = await ctx.llm.complete(retry_request)
+        records.append(llm_call_record(retry_request, response, started))
         budget = _charge(budget, response)
         answer = _parse_answer(response.text)
         notes.append(f"synthesize_retry:{reason}")
         retries += 1
-    return StatePatch(
-        answer=answer,
-        budget=budget,
-        append_message=Message(role="assistant", content=answer.text),
-        append_notes=notes,
+    return (
+        StatePatch(
+            answer=answer,
+            budget=budget,
+            append_message=Message(role="assistant", content=answer.text),
+            append_notes=notes,
+        ),
+        records,
     )
 
 
 async def _streaming_synthesize(
     state: RunState, ctx: RunContext, evidence: list, system: str, prompt: str
-) -> StatePatch:
+) -> tuple[StatePatch, list[dict]]:
     """两阶段流式：先流正文，再单独抽取 claims。"""
     assert ctx.emit is not None
     timeout_s = _timeout_s(state.level, getattr(ctx.config, "node_timeout_s", None))
 
     pieces: list[str] = []
     final: LLMResponse | None = None
-    async for delta in ctx.llm.stream(
-        LLMRequest(
-            messages=[
-                Message(role="system", content=system + _STREAM_INSTRUCTION),
-                Message(role="user", content=prompt),
-            ],
-            purpose="synthesize_answer",
-            max_tokens=_max_tokens(state.level),
-            timeout_s=timeout_s,
-        )
-    ):
+    answer_request = LLMRequest(
+        messages=[
+            Message(role="system", content=system + _STREAM_INSTRUCTION),
+            Message(role="user", content=prompt),
+        ],
+        purpose="synthesize_answer",
+        max_tokens=_max_tokens(state.level),
+        timeout_s=timeout_s,
+        disable_thinking=_disable_thinking(state.level),
+    )
+    started = time.perf_counter()
+    async for delta in ctx.llm.stream(answer_request):
         if delta.text:
             pieces.append(delta.text)
             await ctx.emit("token", {"text": delta.text})
@@ -365,6 +363,7 @@ async def _streaming_synthesize(
     text = _extract_stream_answer("".join(pieces).strip())
     if not text:
         raise _StreamFallback("empty_answer")
+    records = [llm_call_record(answer_request, final, started, text=text)]
 
     response = final.model_copy(update={"text": text}) if final else LLMResponse(text=text)
     budget = _charge(state.budget, response)
@@ -372,37 +371,41 @@ async def _streaming_synthesize(
     if final is None or (final.tokens_in == 0 and final.tokens_out == 0):
         notes.append("stream_usage_missing")
 
-    claims_response = await ctx.llm.complete(
-        LLMRequest(
-            messages=[
-                Message(role="system", content=_CLAIMS_SYSTEM),
-                Message(
-                    role="user",
-                    content=(
-                        f"问题：{state.goal}\n\n答案：\n{text}\n\n"
-                        f"资料：\n{_evidence_block(evidence)}\n\n"
-                        "请抽取答案中的结论，并给出对应的 evidence_ids。"
-                    ),
+    claims_request = LLMRequest(
+        messages=[
+            Message(role="system", content=_CLAIMS_SYSTEM),
+            Message(
+                role="user",
+                content=(
+                    f"问题：{state.goal}\n\n答案：\n{text}\n\n"
+                    f"资料：\n{_evidence_block(evidence)}\n\n"
+                    "请抽取答案中的结论，并给出对应的 evidence_ids。"
                 ),
-            ],
-            purpose="synthesize_claims",
-            max_tokens=1024,
-            timeout_s=timeout_s,
-            disable_thinking=True,
-        )
+            ),
+        ],
+        purpose="synthesize_claims",
+        max_tokens=1024,
+        timeout_s=timeout_s,
+        disable_thinking=True,
     )
+    started = time.perf_counter()
+    claims_response = await ctx.llm.complete(claims_request)
+    records.append(llm_call_record(claims_request, claims_response, started))
     budget = _charge(budget, claims_response)
     claims = _parse_claims(claims_response.text)
     if claims is None:
         raise _StreamFallback("claims_unparsed")
 
-    return StatePatch(
-        answer=Answer(
-            text=text,
-            claims=claims,
-            confidence="medium" if claims else "low",
+    return (
+        StatePatch(
+            answer=Answer(
+                text=text,
+                claims=claims,
+                confidence="medium" if claims else "low",
+            ),
+            budget=budget,
+            append_message=Message(role="assistant", content=text),
+            append_notes=notes,
         ),
-        budget=budget,
-        append_message=Message(role="assistant", content=text),
-        append_notes=notes,
+        records,
     )

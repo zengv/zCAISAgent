@@ -10,6 +10,7 @@ from zcaisagent.orchestration.nodes.act import act_node
 from zcaisagent.orchestration.nodes.analyze import analyze_node
 from zcaisagent.orchestration.nodes.direct_answer import direct_answer_node
 from zcaisagent.orchestration.nodes.grade import grade_node
+from zcaisagent.orchestration.nodes.n2sql import n2sql_node
 from zcaisagent.orchestration.nodes.observe import observe_node
 from zcaisagent.orchestration.nodes.plan import plan_node
 from zcaisagent.orchestration.nodes.reflect import reflect_node
@@ -31,6 +32,7 @@ def build_default_graph() -> GraphSpec:
         "reflect": reflect_node,
         "direct_answer": direct_answer_node,
         "retrieve": retrieve_node,
+        "n2sql": n2sql_node,
         "grade": grade_node,
         "repair": repair_node,
         "synthesize": synthesize_node,
@@ -42,6 +44,8 @@ def build_default_graph() -> GraphSpec:
         Edge("analyze", "route"),
         Edge("route", "abstain", lambda s: s.analysis.get("intent") == "不安全"),
         Edge("route", "direct_answer", lambda s: s.level == AutonomyLevel.L0_DIRECT),
+        # 智能问数：命中数据查询意图时直接走 NL2SQL，不进入知识检索。
+        Edge("route", "n2sql", lambda s: bool(s.analysis.get("data_query"))),
         # L2/L3 走通用循环；L1 维持知识快路径。
         Edge(
             "route",
@@ -58,6 +62,7 @@ def build_default_graph() -> GraphSpec:
             lambda s: (s.analysis.get("loop") or {}).get("decision") == "complete",
         ),
         Edge("reflect", "act"),
+        Edge("n2sql", "respond"),
         Edge("retrieve", "grade"),
         Edge("grade", "abstain", lambda s: not s.evidence),
         Edge(

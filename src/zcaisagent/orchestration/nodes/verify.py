@@ -283,6 +283,8 @@ async def verify_node(state: RunState, ctx: RunContext) -> StatePatch:
                 entail = None
             if entail is not None and entail.response is not None:
                 resp = entail.response
+                if entail.call:
+                    await emit(ctx, state, "llm.called", node="verify", data=entail.call)
                 budget = budget.model_copy(
                     update={
                         "used_llm_calls": budget.used_llm_calls + 1,

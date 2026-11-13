@@ -30,6 +30,7 @@ SUPPORTED_TOPLEVEL = {
     "evaluator",
     "skills",
     "checkpoint",
+    "n2sql",
 }
 
 # docs/03 §17 必须覆盖到的 section 表。
@@ -53,6 +54,7 @@ SECTION_TABLES = {
     "evaluator",
     "skills",
     "checkpoint",
+    "n2sql",
 }
 
 

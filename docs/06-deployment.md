@@ -16,7 +16,7 @@
 
 依赖分层：
 
-- 必装：`pydantic`、`fastapi`、`uvicorn`、`httpx`、`pypdf`、`psycopg[binary]`
+- 必装：`pydantic`、`fastapi`、`uvicorn`、`httpx`、`pypdf`、`psycopg[binary]`、`pymysql`
 - 开发：`pytest`、`ruff`、`mypy`、`import-linter`（`.[dev]`）
 - Redis 缓存（可选）：`redis`（`.[redis]`）
 - Postgres / pgvector：通过 DSN 连接，不需要额外 Python 依赖
@@ -43,9 +43,9 @@ python -m pip install -e ".[dev]"
 Copy-Item .env.example .env
 ```
 
-- `.env`：只放扁平运行参数与密钥；进程环境变量优先于 `.env`。
-- `config.toml`：模型 provider、embedding、rerank、检索、数据库、安全、工具、记忆、缓存、调度、事件、Studio 路径。
-- 外部模型密钥通过 `config.toml` 中 `key_env` 声明的变量名注入，例如 `AI_KEY_DS`、`AI_KEY_MS`、`AI_KEY_QW`；**不要把密钥写进 `config.toml` 或提交到仓库**。
+- `.env`：只放扁平运行参数与密钥；普通运行参数进程环境变量优先于 `.env`。
+- `config.toml`：模型 provider、embedding、rerank、检索、数据库、安全、工具、记忆、缓存、调度、事件、Studio 路径、智能问数（`[n2sql]`）。
+- 外部模型密钥通过 `config.toml` 中 `key_env` 声明的变量名引用，例如 `AI_KEY_DS`、`AI_KEY_MS`、`AI_KEY_QW`；这些密钥**优先从 `.env` 读取**，缺失时回退系统环境变量。**不要把密钥写进 `config.toml` 或提交到仓库**（`.env` 已在 `.gitignore` 中）。
 - 自定义路径：`ZCAISAGENT_CONFIG_FILE`、`ZCAISAGENT_ENV_FILE`。
 
 常用运行参数（均有默认值）：
@@ -104,6 +104,36 @@ Invoke-RestMethod http://127.0.0.1:8080/health
 脚本会依次探测 `.venv` → PATH `python` → conda 环境 → `python3`，以
 `uvicorn zcaisagent.api.app:app --host 127.0.0.1 --port 8080` 后台启动，日志写入
 `.zcaisagent/backend.log`（stderr）与 `.zcaisagent/backend.log.out`（stdout）。
+
+### 2.6 智能问数（可选 MySQL）
+
+智能问数默认随 `[n2sql] enabled` 生效；需要一份**只读 MySQL 账号**，连接参数只从环境变量读取。
+
+```powershell
+# .env 或系统环境变量
+$env:ZCAISAGENT_N2SQL_HOST = "127.0.0.1"
+$env:ZCAISAGENT_N2SQL_PORT = "3306"
+$env:ZCAISAGENT_N2SQL_USER = "zcais_ro"
+$env:ZCAISAGENT_N2SQL_PASSWORD = "******"
+$env:ZCAISAGENT_N2SQL_DATABASE = "school"
+```
+
+`config.toml` 需确认 `[n2sql]` 的 `enabled` / `tables` / `schema`，以及 `[[n2sql.users]]` 的用户范围（见仓库默认配置）。
+
+```powershell
+Invoke-RestMethod -Method Post http://127.0.0.1:8080/v1/n2sql `
+  -Headers @{"X-API-Key"="dev-key"} `
+  -Body (@{question="S1 的成绩是多少？"; user_id="s_s1"} | ConvertTo-Json)
+```
+
+| 返回 | 含义 |
+|---|---|
+| 503 | 未配置 `[n2sql]`、`enabled=false` 或连接参数缺失 |
+| 403 | `user_id` 未在 `[[n2sql.users]]` 中，或缺少 `tool:read` |
+| 400 | 问题为空，或生成的 SQL 未通过只读/白名单校验 |
+| 502 | 模型生成失败，或 MySQL 连接/执行失败 |
+
+> MySQL 账号必须只读，只授予 `tables` 白名单表的 `SELECT`；不要使用 `root`。数据库不可用时只有 `n2sql` 组件降级，不影响检索与其他接口。
 
 ---
 
@@ -272,7 +302,7 @@ server {
 | `ZCAISAGENT_NODE_TIMEOUT_S` | `30` | 单节点超时 |
 | `ZCAISAGENT_INPUT_PRICE_PER_MTOK` / `OUTPUT_PRICE_PER_MTOK` | `0` | 成本估算单价 |
 | `ZCAISAGENT_CONFIG_FILE` / `ZCAISAGENT_ENV_FILE` | 自动探测 | 配置与 `.env` 路径 |
-| `AI_KEY_DS` / `AI_KEY_MS` / `AI_KEY_QW` | 空 | 对应 provider 的模型密钥（`key_env` 声明） |
+| `AI_KEY_DS` / `AI_KEY_MS` / `AI_KEY_QW` | 空 | 对应 provider 的模型密钥（`key_env` 声明，优先读 `.env`） |
 | `ZCAISAGENT_EMBEDDING_ENABLED` | 跟随配置 | 覆盖 `[embedding] enabled` |
 | `ZCAISAGENT_RERANK_ENABLED` | 跟随配置 | 覆盖 `[rerank] enabled` |
 | `ZCAISAGENT_HYDE_ENABLED` / `ZCAISAGENT_PARENT_CHILD_ENABLED` | 跟随配置 | 检索增强开关 |
@@ -290,6 +320,9 @@ server {
 | `ZCAISAGENT_EVENT_SECRET` | 空 | Webhook 签名密钥（`secret_env` 默认值） |
 | `ZCAISAGENT_SECRET_PROVIDER` / `VAULT_ADDR` / `VAULT_TOKEN` | `env` / 空 | 密钥来源 |
 | `ZCAISAGENT_STUDIO_EVAL_REPORT` / `STUDIO_EVAL_GATE` / `STUDIO_BASELINE_DIR` | 配置值 | Studio 评估页路径 |
+| `ZCAISAGENT_N2SQL_ENABLED` | 跟随 `[n2sql] enabled` | 智能问数开关 |
+| `ZCAISAGENT_N2SQL_HOST` / `_PORT` / `_USER` / `_PASSWORD` / `_DATABASE` | 空 / `3306` | 只读 MySQL 连接；由 `*_env` 指向，密码只放环境变量 |
+| `ZCAISAGENT_N2SQL_MAX_ROWS` / `_TIMEOUT_S` | 配置值 | 查询行数上限与超时 |
 
 ### 4.5 数据目录与权限
 
@@ -332,6 +365,7 @@ Windows：用专用服务账号，`icacls` 只授予该账号对 `.zcaisagent` �
 | MCP | `[tools.mcp.*]` 或 `mcp_servers` | 子进程启动/发现失败只标记 `tools.mcp.<name>=down`，不阻断启动 |
 | OpenAPI | `[tools.openapi.*]` | spec 加载失败标记 `tools.openapi.<name>=down`，其他工具可用 |
 | 只读 SQL | `[tools.sql.*]` | 路径/表白名单非法标记 `tools.sql.<name>=down` |
+| 智能问数 MySQL | `[n2sql] enabled=true` + `pymysql` + 连接环境变量 | 驱动缺失或连接参数不全 → `n2sql` 健康项 `down`，`/v1/n2sql` 返回 503；其他能力不受影响 |
 | OIDC | `[security] identity="oidc"` | 配置不完整回退 API Key，`security.identity=down` |
 | OPA | `[security.opa] url` | 端点异常时策略拒绝（fail closed） |
 
@@ -349,6 +383,9 @@ Windows：用专用服务账号，`icacls` 只授予该账号对 `.zcaisagent` �
 - [ ] 审计 `audit.jsonl` 只追加：不要原地编辑；需要更强保证时用 OS append-only 属性或只读挂载消费。
 - [ ] Studio 的 API Key 只保存在浏览器 `sessionStorage`，关闭标签页即失效；不要把 Key 放进 URL。
 - [ ] 定期轮换模型密钥、OIDC 客户端密钥与 Webhook 签名密钥。
+- [ ] 智能问数使用独立只读 MySQL 账号，只授予白名单表 `SELECT`，禁止 `root` 与写权限。
+- [ ] `[[n2sql.users]]` 只配置确需访问的用户；未知用户默认拒绝；MySQL 端口不暴露公网。
+- [ ] 生产删除或收紧 `dev` / `web` 等默认 admin 映射；`/v1/n2sql` 的 `user_id` 由可信网关注入，不要直接信任客户端任意传值。
 
 ---
 

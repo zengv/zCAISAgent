@@ -240,7 +240,7 @@ async def execute(graph: GraphSpec, state: RunState, ctx: RunContext) -> RunStat
 
 ### 3.4 内置图
 
-> **实现现状**：实际图为 `build_default_graph()`：`analyze→route→{abstain|direct_answer|retrieve|plan}`；`plan→act→observe→reflect→{act|grade}`；`retrieve→grade→{abstain|synthesize|repair}`；`synthesize→verify→{respond|abstain|repair}`；`repair→{retrieve|synthesize|respond(降级)|abstain}`。**无独立的 `rewrite`/`source_route`/`replan`/`clarify` 节点**：改写与选源在 `retrieve` 节点内部完成，重规划由 `repair` 承担，澄清未实现。下方 §3.4.1/§3.4.2 的 mermaid 为**目标态蓝图**，节点名以本节说明与 README「检索路由链路」图为准。
+> **实现现状**：实际图为 `build_default_graph()`：`analyze→route→{abstain|direct_answer|n2sql|retrieve|plan}`；`plan→act→observe→reflect→{act|grade}`；`retrieve→grade→{abstain|synthesize|repair}`；`synthesize→verify→{respond|abstain|repair}`；`repair→{retrieve|synthesize|respond(降级)|abstain}`。**无独立的 `rewrite`/`source_route`/`replan`/`clarify` 节点**：改写与选源在 `retrieve` 节点内部完成，重规划由 `repair` 承担，澄清未实现。`n2sql` 仅在配置了 `[n2sql]` 且 `analyze` 命中数据查询意图时可达，命中后不进入知识检索。下方 §3.4.1/§3.4.2 的 mermaid 为**目标态蓝图**，节点名以本节说明与 README「检索路由链路」图为准。
 
 #### 3.4.1 通用 Agent 循环（L2/L3）
 
@@ -506,6 +506,13 @@ class RetrieverPort(Protocol):
 class ToolPort(Protocol):
     spec: "ToolSpec"
     async def invoke(self, args: dict, ctx: "AuthContext") -> "ToolResult": ...
+
+# ports/n2sql.py
+class N2SQLPort(Protocol):
+    async def ask(self, question: str, auth: "AuthContext") -> "N2SQLResult": ...
+
+class SqlQueryPort(Protocol):
+    async def execute(self, sql: str, max_rows: int) -> tuple[list[str], list[dict]]: ...
 ```
 
 ```python
@@ -573,6 +580,8 @@ class EvaluatorPort(Protocol):
 | `answer.verified` | 校验 | faithfulness, citation_support, action |
 | `run.finished` | 结束 | status, steps, tokens, cost, latency, resolved_flag |
 | `feedback.received` | 用户反馈 | rating, corrected_answer, trace_id |
+
+> 智能问数复用 `llm.called`（`purpose=n2sql_generate` / `n2sql_answer`），每次查询另写 `n2sql.query` 审计事件（`outcome` / `scope` / `sql_digest` / `row_count`），不新增独立 RunEvent 类型。
 
 ### 6.2 追踪字段（最小集）
 
@@ -858,6 +867,57 @@ flowchart LR
 | **File** | 文件读写/转换/打包 | 路径白名单；禁止跳出工作目录；全量审计 |
 | **Code** | 数据分析 | 容器沙箱；无网络；CPU/内存/时间限制 |
 
+### 9.5 智能问数（NL2SQL）
+
+智能问数是 `DataQuery` 动作的专用实现，不是独立服务。`analyze` 在 `[n2sql]` 已配置且问题命中数据查询意图时写入 `analysis.data_query=true`，`route` 直接进入 `n2sql` 节点，**不进入知识检索**；查询结果归一为 `SourceType.SQL` 的 `Evidence`，并生成带引用的答案与校验结论。
+
+```mermaid
+flowchart LR
+    Q["自然语言问题"] --> A["analyze<br/>数据查询意图识别"]
+    A --> R{"route"}
+    R -->|"命中"| G["LLM 生成 SQL<br/>n2sql_generate"]
+    R -->|"未命中"| K["知识检索链路"]
+    G --> V["只读校验<br/>单条 SELECT/WITH · 表白名单<br/>禁注释/DDL/DML/系统库/危险函数"]
+    V --> S["行级权限注入<br/>白名单表 → 带 WHERE 的派生表"]
+    S --> L["自动补 LIMIT"]
+    L --> D[("MySQL 只读执行")]
+    D --> N["LLM 归纳答案<br/>n2sql_answer"]
+    D -->|"归纳失败"| F["结构化结果摘要"]
+    N --> E["Evidence + Answer + Verdict"]
+    F --> E
+```
+
+| 环节 | 实现 | 规则 |
+|---|---|---|
+| **生成** | `N2SQLService._generate`（purpose `n2sql_generate`，关闭思考） | 只用 `tables` 与 `schema` 提供的表和列；只输出一个 JSON `{sql, explanation}` |
+| **解析** | `_parse_sql` | 依次尝试 JSON、被截断的 `sql` 字段、SQL 代码块、裸 `SELECT/WITH`；无法解析即失败 |
+| **只读校验** | `sql_guard.validate_sql` | 单条语句、禁止注释、只允许 `SELECT/WITH`、写/危险关键字黑名单、系统库与 `load_file/sleep/benchmark` 黑名单、表白名单、禁止逗号连接、CTE 名不得与白名单表重名 |
+| **权限注入** | `sql_guard.apply_scope` | 把 `FROM/JOIN` 的白名单表替换为 `(SELECT * FROM t WHERE <predicate>) AS alias`；条件由服务端生成，模型 SQL 无法绕过 |
+| **行数上限** | `sql_guard.ensure_limit` | 无 `LIMIT` 时补 `max_rows`；执行侧 `fetchmany(max_rows)` 二次兜底 |
+| **执行** | `MySqlReadonlyClient`（`adapters/store/mysql.py`） | 单次查询新建连接、线程池执行、`connect/read/write_timeout`、会话级 `MAX_EXECUTION_TIME`、结果值 JSON 化 |
+| **归纳** | `N2SQLService._answer`（purpose `n2sql_answer`） | 只根据查询结果作答，不编造数字；失败回退结构化摘要 |
+| **审计** | `N2SQLService._record` | `n2sql.query`：`outcome` / `scope` / `sql_digest` / `row_count`；审计失败不阻断查询 |
+
+**数据范围（`DataScope`）**：
+
+| 角色 | `courses` | `scores` | `students` |
+|---|---|---|---|
+| `admin` | 不限制 | 不限制 | 不限制 |
+| `teacher` | `courseTeacher = <teacher_name>` | `courseID IN (本人课程)` | `studentID IN (本人课程的学生)` |
+| `student` | 不限制 | `studentID = <student_id>` | `studentID = <student_id>` |
+
+范围来自 `[[n2sql.users]]` 的静态映射；**未知用户或缺少 `student_id`/`teacher_name` 时返回 `None` 并直接拒绝**。`AuthContext.roles` 同时决定 RBAC scopes 与文档 ACL token，因此同一份用户目录既控制知识检索范围，也控制数据查询范围。
+
+| 错误码 | HTTP | 含义 |
+|---|---|---|
+| `N2SQL_FORBIDDEN` | 403 | 缺少 `tool:read` 或用户未配置数据权限 |
+| `N2SQL_INVALID_ARGS` | 400 | 问题为空 |
+| `N2SQL_INVALID_SQL` | 400 | 非只读、越白名单、含危险关键字/对象 |
+| `N2SQL_LLM_FAILED` | 502 | SQL 生成失败或无法解析 |
+| `N2SQL_DB_FAILED` | 502 | 数据库连接或执行失败 |
+
+**配置与降级**：`[n2sql]` 见 §17；连接参数只从 `*_env` 指向的环境变量读取。未配置、`enabled=false`、连接参数缺失或驱动不可用时，容器把 `n2sql` 置为 `None`，`/v1/n2sql` 返回 503，聊天链路不触发数据查询；健康板记录 `n2sql` 条目。
+
 ---
 
 ## 10. 记忆子系统
@@ -1006,6 +1066,7 @@ class AuthContext(BaseModel):
 | **认证** | OIDC / API Key（服务间） |
 | **租户隔离** | 所有表 `tenant_id` + Postgres RLS；检索过滤强制 |
 | **文档 ACL** | 源系统 ACL 同步为 `acl_tokens`，检索前过滤 |
+| **数据行级权限** | `[n2sql]` 的 `[[n2sql.users]]` 定义 `user_id → role → 数据范围`；执行前把白名单表改写为带 `WHERE` 的派生表，未知用户拒绝 |
 | **工具权限** | scope 白名单 + 风险分级 + 审批 |
 | **最小权限** | 默认只读；写操作显式授权 |
 
@@ -1193,6 +1254,9 @@ hyde_max_tokens = 256
 parent_child_enabled = false
 parent_max_chars = 1800
 max_context_tokens = 6000
+acl_default = ["public"]                     # 文档默认 ACL
+[retrieval.acl_by_file]                      # 按文件名覆盖 ACL
+"it_support.md" = ["it_support"]
 
 [database]                                  # pgvector 持久化；连接失败回退内存
 enabled = false
@@ -1211,8 +1275,8 @@ cost_out = 0.42
 
 [security]
 identity = "api_key"                        # api_key | oidc
-roles = { support = ["retrieve","tool:read","run:create"], admin = ["retrieve","tool:read","tool:write","run:create","run:approve","admin:read","admin:write"] }
-acl_tokens_by_role = { support = ["public"], admin = ["public","finance"] }
+roles = { support = ["retrieve","tool:read","run:create"], teacher = ["retrieve","tool:read","run:create"], student = ["retrieve","tool:read","run:create"], admin = ["retrieve","tool:read","tool:write","run:create","run:approve","admin:read","admin:write"] }
+acl_tokens_by_role = { support = ["public"], teacher = ["public"], student = ["it_support"], admin = ["public","finance","it_support"] }
 [security.oidc]
 introspection_url = ""
 client_id = ""
@@ -1294,6 +1358,23 @@ backend = "jsonl"
 compact_enabled = true
 compact_threshold_lines = 20
 compact_keep = 1
+
+[n2sql]                                     # 智能问数（NL2SQL）；连接参数只从环境变量读取
+enabled = true
+max_rows = 100
+timeout_s = 30.0
+host_env = "ZCAISAGENT_N2SQL_HOST"
+port_env = "ZCAISAGENT_N2SQL_PORT"
+user_env = "ZCAISAGENT_N2SQL_USER"
+password_env = "ZCAISAGENT_N2SQL_PASSWORD"
+database_env = "ZCAISAGENT_N2SQL_DATABASE"
+tables = ["courses", "students", "scores"]
+schema = "…DDL…"
+
+[[n2sql.users]]                             # 模拟用户 → 数据可见范围；未知用户拒绝
+user_id = "s_s1"
+role = "student"                            # admin | teacher | student
+student_id = "S1"
 ```
 
 **预算口径**：运行时预算档位由 `orchestration/policies/budget.py` 定义。**节点步数**按节点执行次数计：

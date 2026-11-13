@@ -112,6 +112,64 @@ def test_approve_reject_body_and_cancel_without_body() -> None:
     assert requests[2].content == b""
 
 
+def test_ask_n2sql_posts_payload_and_returns_result() -> None:
+    captured: dict[str, httpx.Request] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["request"] = request
+        return httpx.Response(
+            200,
+            json={
+                "answer": "S1 的成绩是 92 分。",
+                "sql": "SELECT * FROM scores WHERE studentID = 'S1'",
+                "columns": ["studentID", "score"],
+                "rows": [{"studentID": "S1", "score": 92}],
+                "row_count": 1,
+                "scope": "student:S1",
+            },
+        )
+
+    async def scenario() -> dict:
+        async with _client(handler) as client:
+            return await client.ask_n2sql(
+                "S1 的成绩是多少？", user_id="s_s1", tenant_id="demo"
+            )
+
+    result = asyncio.run(scenario())
+
+    request = captured["request"]
+    assert request.method == "POST"
+    assert str(request.url) == f"{_API}/v1/n2sql"
+    assert request.headers["X-API-Key"] == "test-key"
+    assert json.loads(request.content) == {
+        "question": "S1 的成绩是多少？",
+        "user_id": "s_s1",
+        "tenant_id": "demo",
+    }
+    assert result["answer"] == "S1 的成绩是 92 分。"
+    assert result["row_count"] == 1
+    assert result["rows"] == [{"studentID": "S1", "score": 92}]
+
+
+def test_ask_n2sql_omits_optional_tenant() -> None:
+    captured: dict[str, httpx.Request] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["request"] = request
+        return httpx.Response(200, json={"answer": "", "rows": []})
+
+    async def scenario() -> dict:
+        async with _client(handler) as client:
+            return await client.ask_n2sql("S1 的成绩是多少？", user_id="s_s1")
+
+    asyncio.run(scenario())
+
+    assert json.loads(captured["request"].content) == {
+        "question": "S1 的成绩是多少？",
+        "user_id": "s_s1",
+    }
+
+
 def test_metrics_and_health_paths() -> None:
     requests: list[httpx.Request] = []
 

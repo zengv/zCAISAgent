@@ -23,6 +23,7 @@ from zcaisagent.adapters.security.opa import OpaPolicy
 from zcaisagent.adapters.tools.openapi import build_openapi_tools
 from zcaisagent.adapters.trace.jsonl import JsonlTrace
 from zcaisagent.capabilities.memory.store import InMemoryMemory
+from zcaisagent.capabilities.n2sql.service import N2SQLService
 from zcaisagent.capabilities.retrieval.registry import SourceRegistry
 from zcaisagent.capabilities.retrieval.rerank import (
     EmbeddingReranker,
@@ -99,6 +100,8 @@ class Container:
     events: EventSinkPort | None = None
     # 索引版本摘要，参与检索缓存键；空索引为 "empty"。
     index_version: str = "empty"
+    # 智能问数（NL2SQL）；None 表示未启用或连接未配置。
+    n2sql: N2SQLService | None = None
 
 
 def build_cache(
@@ -279,6 +282,69 @@ def build_trace(
     return trace
 
 
+def build_n2sql(
+    settings: Settings,
+    llm: LLMPort,
+    *,
+    audit: AuditPort | None = None,
+    health: HealthBoard | None = None,
+) -> N2SQLService | None:
+    """按 ``[n2sql]`` 装配智能问数；连接参数缺失或驱动不可用时降级为未启用。"""
+    config = settings.n2sql
+    if config is None or not config.enabled:
+        _report_health(health, "n2sql", True, "disabled", owner="n2sql")
+        return None
+    missing = [
+        name
+        for name, value in (
+            ("host", config.host),
+            ("user", config.user),
+            ("password", config.password),
+            ("database", config.database),
+        )
+        if not value
+    ]
+    if missing:
+        _report_health(
+            health,
+            "n2sql",
+            False,
+            "missing connection env: " + ",".join(missing),
+            owner="n2sql",
+        )
+        return None
+    try:
+        from zcaisagent.adapters.store.mysql import MySqlReadonlyClient, mysql_available
+
+        if not mysql_available():
+            raise RuntimeError("pymysql is not installed")
+        executor = MySqlReadonlyClient(
+            host=config.host,
+            port=config.port,
+            user=config.user,
+            password=config.password,
+            database=config.database,
+            timeout_s=config.timeout_s,
+        )
+    except Exception as exc:  # noqa: BLE001 - 外部数据库失败不阻断启动
+        _report_health(health, "n2sql", False, str(exc), owner="n2sql")
+        return None
+    _report_health(
+        health,
+        "n2sql",
+        True,
+        f"mysql {config.host}:{config.port}/{config.database}",
+        owner="n2sql",
+    )
+    return N2SQLService(
+        config,
+        llm,
+        executor,
+        audit=audit,
+        llm_timeout_s=max(settings.node_timeout_s, 10.0),
+    )
+
+
 def build_checkpoint(
     settings: Settings,
     health: HealthBoard | None = None,
@@ -397,8 +463,16 @@ def _build_security(
 ) -> tuple[IdentityPort, PolicyPort]:
     """按 [security] 装配身份与策略；OIDC 配置缺失时回退 API Key 并标记降级。"""
     security = settings.security
+    role_by_user = (
+        {user_id: scope.role for user_id, scope in settings.n2sql.users.items()}
+        if settings.n2sql is not None
+        else {}
+    )
     identity: IdentityPort = ApiKeyIdentity(
-        settings.api_key, settings.default_tenant, security
+        settings.api_key,
+        settings.default_tenant,
+        security,
+        role_by_user=role_by_user,
     )
     if security is not None and security.identity_mode == "oidc":
         client_secret = (
@@ -483,6 +557,8 @@ def build_container(settings: Settings | None = None, ingest: bool = True) -> Co
                 ingest_directory(
                     settings.seed_dir,
                     tenant_id=settings.default_tenant,
+                    acl=settings.seed_acl_default,
+                    acl_by_file=settings.seed_acl_by_file,
                     parent_max_chars=(
                         settings.parent_max_chars
                         if settings.parent_child_enabled
@@ -554,6 +630,7 @@ def build_container(settings: Settings | None = None, ingest: bool = True) -> Co
     secret = build_secret(settings, health)
     events = build_events(settings, health)
     identity, policy = _build_security(settings, health)
+    n2sql = build_n2sql(settings, llm, audit=audit, health=health)
 
     skills_registry = build_skill_registry(settings)
     _report_health(
@@ -593,6 +670,7 @@ def build_container(settings: Settings | None = None, ingest: bool = True) -> Co
         cache=cache,
         events=events,
         index_version=index_version,
+        n2sql=n2sql,
     )
 
 
@@ -664,5 +742,6 @@ def build_context(container: Container, auth: AuthContext) -> RunContext:
         cache=container.cache,
         events=container.events,
         node_timeout_s=container.settings.node_timeout_s,
+        n2sql=container.n2sql,
         extra={"index_version": container.index_version},
     )

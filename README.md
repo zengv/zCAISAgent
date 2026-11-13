@@ -2,7 +2,7 @@
 
 > 通用 Agent 为内核，Agentic RAG 为内置能力：可私有化、可审计、可评估、可扩展。
 
-当前阶段：**M2 已完成，M3 产品化交付**（Studio 四页、Admin 平台 API、成本/延迟/质量看板、压测与故障演练、Python SDK，400+ 项测试全绿）。八份文档 + 代码：
+当前阶段：**M2 已完成，M3 产品化交付**（Studio 四页、Admin 平台 API、成本/延迟/质量看板、压测与故障演练、Python SDK、智能问数与查询数据权限，400+ 项测试全绿）。八份文档 + 代码：
 
 | 文档                                         | 内容                                                         | 适合谁         |
 | ------------------------------------------ | ---------------------------------------------------------- | ----------- |
@@ -19,7 +19,7 @@
 
 ## 核心结论（5 条）
 
-1. **zCAISAgent 的内核是通用 Agent**：检索、工具调用、代码执行、浏览器、文件操作都是同一 `ActionSpace` 中的不同动作，统一由状态机、预算与验证器约束。
+1. **zCAISAgent 的内核是通用 Agent**：检索、工具调用、智能问数（数据查询）、代码执行、浏览器、文件操作都是同一 `ActionSpace` 中的不同动作，统一由状态机、预算与验证器约束。
 2. **Agentic RAG 是通用 Agent 的一个受限实例**：只保留检索/答案/校验/追问动作；二者统一于 CAIS，共用同一运行时。
 3. **图中流程是最小可行版本（L1）**：闭环思想正确，但缺少预算/终止、证据重排、claim 级校验、多源融合、记忆与治理，且"回退到原始 Query"会导致状态丢失与不收敛。
 4. **生产化的关键是"证据闭环 + 预算驱动 + 渐进式自主"**：默认 L1 快路径，复杂任务升级 L2/L3，所有循环受硬预算约束。
@@ -30,7 +30,7 @@
 ## 统一模型（一句话版）
 
 ```
-zCAISAgent       = Agent(ActionSpace ⊇ {Retrieve, ToolCall, CodeExec, Browse, FileOp, AskUser, Finish})
+zCAISAgent       = Agent(ActionSpace ⊇ {Retrieve, ToolCall, DataQuery, CodeExec, Browse, FileOp, AskUser, Finish})
 Agentic RAG  = zCAISAgent with ActionSpace = {Retrieve, Answer, Verify, AskUser, Finish}
 CAIS         = Orchestrator(Graph(Components), Contracts, Evaluation, Observability)
 ```
@@ -139,6 +139,21 @@ flowchart TB
 
 ***
 
+## 智能问数（NL2SQL）与查询数据权限
+
+智能问数不是独立服务，而是运行时的一个数据查询动作：`analyze` 命中数据查询意图后，`route` 直接进入 `n2sql` 节点，不进入知识检索。
+
+- **入口**：`POST /v1/n2sql`，请求 `{question, user_id, tenant_id}`；聊天链路（`/v1/chat`）同样支持自然语言问数。
+- **链路**：LLM 生成 SQL → 只读校验（单条 `SELECT/WITH`、表白名单、禁注释/DDL/DML/系统库/危险函数、禁止逗号连接）→ **服务端强制注入行级过滤** → 自动补 `LIMIT` → MySQL 只读执行 → LLM 归纳答案（失败时回退结构化结果摘要）。
+- **数据权限**：`[[n2sql.users]]` 定义 `user_id → role`。`admin` 不限制；`teacher` 只能看本人课程及其学生成绩；`student` 只能看本人成绩与学生信息；**未知用户直接拒绝**。过滤条件由服务端把白名单表改写为带 `WHERE` 的派生表，模型生成的 SQL 无法绕过。
+- **审计**：每次查询写入 `n2sql.query`（`outcome` / `scope` / `sql_digest` / `row_count`），SQL 与答案随 Run 轨迹留痕。
+- **降级**：未配置 `[n2sql]` 或连接参数缺失时，`/v1/n2sql` 返回 503，聊天链路不触发数据查询；数据库异常返回 502，不影响检索与其他组件。
+- **连接参数**：只从环境变量读取（`ZCAISAGENT_N2SQL_HOST` / `_PORT` / `_USER` / `_PASSWORD` / `_DATABASE`），密钥不落配置文件。
+
+> 实现与测试：`src/zcaisagent/capabilities/n2sql/`、`ports/n2sql.py`、`orchestration/nodes/n2sql.py`、`adapters/store/mysql.py`、`tests/unit/test_n2sql_*.py`、`tests/integration/test_n2sql_api.py`、`tests/security/test_doc_acl.py`。
+
+***
+
 ## 扩展接口（详见 [03 §18](docs/03-architecture.md)）
 
 | 接口                  | 现状                     | 说明                                             | 里程碑   |
@@ -192,13 +207,19 @@ uvicorn zcaisagent.api.app:app --reload --port 8080
 ```powershell
 python scripts/loadtest.py --concurrency 20 --requests 40  # 压测并写入 data/perf/
 python scripts/fault_drill.py                               # 四类故障演练，写入 data/drills/
+
+# 智能问数（需在 .env 配置 MySQL 连接；user_id 需存在于 [[n2sql.users]]）
+Invoke-RestMethod -Method Post http://127.0.0.1:8080/v1/n2sql `
+  -Headers @{"X-API-Key"="dev-key"} `
+  -Body (@{question="S1 的成绩是多少？"; user_id="s_s1"} | ConvertTo-Json)
 ```
 
 访问 <http://127.0.0.1:8080/studio> 打开 Studio；`loadtest.py` 默认请求 `http://127.0.0.1:8080`，
 并可用 `--base-url` / `--api-key` 覆盖。
 
-配置默认从项目根目录的 `.env` 读取（进程环境变量优先）。`.env` 只放密钥等运行参数，
-模型路由全部在 `config.toml` 定义，密钥经 `key_env` 指定的环境变量注入（如 `AI_KEY_DS`）；
+配置默认从项目根目录的 `.env` 读取；普通运行参数进程环境变量优先，模型密钥则由
+`key_env` 指定并优先从 `.env` 读取（缺失时回退系统环境变量）。`.env` 只放密钥等运行参数，
+模型路由全部在 `config.toml` 定义，密钥经 `key_env` 引用（如 `AI_KEY_DS`）；
 一个 provider 都没配置时回退 `FakeLLM`，无需 API Key 即可跑通。仓库默认 `config.toml` 已配置 provider；
 若暂时没有模型密钥，可把 `ZCAISAGENT_CONFIG_FILE` 指向不含 `[model_providers.*]` 的 TOML 做离线演示（见
 [06 · 部署手册 §2.3](docs/06-deployment.md)）。
@@ -214,13 +235,15 @@ async def main() -> None:
     async with ZCAISClient("http://127.0.0.1:8080", api_key="dev-key") as client:
         run = await client.create_run("一线城市住宿标准是多少？", level="L1")
         print(run["status"], run["answer"])
+        data = await client.ask_n2sql("S1 的成绩是多少？", user_id="s_s1")
+        print(data["answer"], data["row_count"])
         print((await client.health())["status"])
 
 
 asyncio.run(main())
 ```
 
-完整方法、SSE 与异常处理见 [08 · Python SDK](docs/08-sdk.md)。
+完整方法、SSE、智能问数与异常处理见 [08 · Python SDK](docs/08-sdk.md)。
 
 模型选择由「是否显式指定 `reasoning_effort`」决定：
 
@@ -310,6 +333,8 @@ Studio 由 FastAPI 同源托管（`src/zcaisagent/api/static/studio.html`），�
 | **Budget**       | token / 成本 / 时间 / 步数的硬约束，由运行时强制执行                               |
 | **HITL**         | Human-in-the-loop，人类在环：澄清、审批、纠错                                 |
 | **MCP**          | Model Context Protocol，工具/资源接入标准协议                              |
+| **NL2SQL**       | 自然语言转 SQL；本项目作为 `DataQuery` 动作接入统一运行时                     |
+| **DataScope**    | 用户可见数据范围（admin / teacher / student），由服务端在执行前强制注入              |
 | **L0-L3**        | 通用 Agent 自主性分级：直答 / 单步工具+检索 / 多步 Agent / 深度自主任务                 |
 | **Golden Set**   | 分层黄金评估集，用于回归门禁                                                  |
 
@@ -339,4 +364,4 @@ Studio 由 FastAPI 同源托管（`src/zcaisagent/api/static/studio.html`），�
 | 产品层方案    | ✅ 已完成并确认（Q1-Q6 基线）                      |
 | 技术架构方案   | ✅ 完成                                    |
 | 工程落地计划   | ✅ 完成                                    |
-| 代码实现     | ✅ M0 骨架 + Agentic RAG 检索链路 + M2 工具/记忆/治理 + M3 产品化（Studio、压测、故障演练、SDK、部署/运维文档，400+ 项测试） |
+| 代码实现     | ✅ M0 骨架 + Agentic RAG 检索链路 + M2 工具/记忆/治理 + M3 产品化（Studio、压测、故障演练、SDK、部署/运维文档、智能问数与查询数据权限，400+ 项测试） |

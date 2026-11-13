@@ -383,6 +383,8 @@ def cmd_index(args: argparse.Namespace) -> int:
         chunks = ingest_directory(
             settings.seed_dir,
             tenant_id=args.tenant or settings.default_tenant,
+            acl=settings.seed_acl_default,
+            acl_by_file=settings.seed_acl_by_file,
             parent_max_chars=(
                 settings.parent_max_chars if settings.parent_child_enabled else None
             ),

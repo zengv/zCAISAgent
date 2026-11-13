@@ -1,3 +1,4 @@
+from collections.abc import Mapping
 from typing import Any
 
 from zcaisagent.domain.errors import ZCAISAgentError
@@ -102,21 +103,30 @@ class ApiKeyIdentity:
         tenant_id: str = "demo",
         security: SecurityConfig | None = None,
         roles: list[str] | None = None,
+        role_by_user: Mapping[str, str] | None = None,
     ) -> None:
         self.api_key = api_key
         self.tenant_id = tenant_id
         self.security = security
         self.roles = list(roles) if roles is not None else [DEFAULT_ROLE]
+        # 模拟用户目录：配置存在时按 user_id 决定角色，未知用户默认无角色（拒绝）。
+        self.role_by_user = dict(role_by_user or {})
 
     async def authenticate(self, token: str, request_meta: dict) -> AuthContext:
         if not token or token != self.api_key:
             raise ZCAISAgentError("UNAUTHORIZED", "invalid api key")
+        user_id = request_meta.get("user_id") or "dev"
+        if self.role_by_user:
+            role = self.role_by_user.get(user_id)
+            roles = [role] if role else []
+        else:
+            roles = list(self.roles)
         return AuthContext(
             tenant_id=request_meta.get("tenant_id") or self.tenant_id,
-            user_id=request_meta.get("user_id") or "dev",
-            roles=list(self.roles),
-            scopes=scopes_for_roles(self.roles, self.security),
-            acl_tokens=acl_tokens_for_roles(self.roles, self.security),
+            user_id=user_id,
+            roles=roles,
+            scopes=scopes_for_roles(roles, self.security),
+            acl_tokens=acl_tokens_for_roles(roles, self.security),
             request_id=request_meta.get("request_id", ""),
         )
 

@@ -229,6 +229,38 @@ async def health() -> dict
   `tokens`、`cost_usd`、`cache`、`quality`。
 - `health` 对应 `GET /health`，不需要 admin scope；`status=degraded` 时仍返回 HTTP 200。
 
+### 6.1 智能问数
+
+```python
+result = await client.ask_n2sql(
+    "S1 的成绩是多少？",
+    user_id="s_s1",
+    tenant_id="demo",
+)
+print(result["answer"])
+print(result["sql"])
+print(result["scope"], result["row_count"])
+for row in result["rows"]:
+    print(row)
+```
+
+签名：
+
+```python
+async def ask_n2sql(
+    self,
+    question: str,
+    *,
+    user_id: str = "dev",
+    tenant_id: str | None = None,
+) -> dict
+```
+
+- 对应 `POST /v1/n2sql`；返回 `answer`、`sql`、`columns`、`rows`、`row_count`、`scope`、`latency_ms`。
+- `user_id` 必须存在于 `config.toml` 的 `[[n2sql.users]]`，否则返回 **403**；数据范围由服务端强制注入。
+- **400**：问题为空或 SQL 未通过只读/白名单校验；**502**：模型生成或 MySQL 执行失败；**503**：智能问数未启用或连接未配置。
+- 聊天链路（`chat_stream` / `create_run`）命中数据查询意图时也会走同一 `n2sql` 服务，无需单独调用本接口。
+
 ---
 
 ## 7. 异常类型

@@ -7,8 +7,10 @@ from __future__ import annotations
 
 import json
 import re
+import time
 
 from zcaisagent.domain.models import Message
+from zcaisagent.orchestration.telemetry import llm_call_record
 from zcaisagent.ports.evaluation import EntailmentResult
 from zcaisagent.ports.llm import LLMPort, LLMRequest
 
@@ -38,16 +40,20 @@ class LLMEntailmentJudge:
             timeout_s=self.timeout_s,
             disable_thinking=True,
         )
+        started = time.perf_counter()
         try:
             response = await self.llm.complete(request)
         except Exception:  # noqa: BLE001 - 判官失败回退词面
             return EntailmentResult(score=None, response=None)
+        call = llm_call_record(request, response, started)
         match = _JSON_OBJECT.search(response.text)
         if not match:
-            return EntailmentResult(score=None, response=response)
+            return EntailmentResult(score=None, response=response, call=call)
         try:
             payload = json.loads(match.group(0))
             score = float(payload.get("entailment"))
         except (json.JSONDecodeError, TypeError, ValueError):
-            return EntailmentResult(score=None, response=response)
-        return EntailmentResult(score=max(0.0, min(1.0, score)), response=response)
+            return EntailmentResult(score=None, response=response, call=call)
+        return EntailmentResult(
+            score=max(0.0, min(1.0, score)), response=response, call=call
+        )

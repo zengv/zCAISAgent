@@ -18,6 +18,7 @@ from zcaisagent.ports.events import EventSinkPort
 from zcaisagent.ports.health import HealthPort, HealthStatus
 from zcaisagent.ports.llm import LLMPort
 from zcaisagent.ports.memory import MemoryPort
+from zcaisagent.ports.n2sql import N2SQLPort
 from zcaisagent.ports.retrieval import RetrieverPoolPort, RetrieverPort
 from zcaisagent.ports.security import AuditPort, AuthContext, GuardrailPort
 from zcaisagent.ports.skills import SkillRegistryPort
@@ -44,6 +45,8 @@ class RunContext:
     skills: SkillRegistryPort | None = None
     tools: ToolGateway | None = None
     memory: MemoryPort | None = None
+    # 智能问数；None 表示未启用，聊天链路不会触发数据查询。
+    n2sql: N2SQLPort | None = None
     # 结果缓存；None 表示不缓存（默认）。
     cache: CachePort | None = None
     # 事件投递出口；None 表示不投递（默认）。
@@ -150,6 +153,19 @@ class Runtime:
                         "evidence": len(state.evidence),
                         "notes": list(patch.append_notes),
                         "error": state.error,
+                        # 中间产物：本节点产出的结构化分析（如 n2sql 的 SQL/列/行数）。
+                        "analysis": patch.analysis,
+                        # 中间产物：本节点新增的证据（含检索/工具原始结果摘要）。
+                        "evidence_added": [
+                            {
+                                "id": item.id,
+                                "source_type": item.source_type.value,
+                                "source_name": item.source_name,
+                                "title": item.title,
+                                "snippet": item.snippet,
+                            }
+                            for item in patch.append_evidence
+                        ],
                     },
                 },
             )

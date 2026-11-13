@@ -104,6 +104,9 @@ class SqliteBm25Retriever:
         if req.acl_tokens:
             sql += " AND (" + " OR ".join("acl LIKE ?" for _ in req.acl_tokens) + ")"
             params.extend(f"%|{token}|%" for token in req.acl_tokens)
+        else:
+            # 无任何 ACL token 时按拒绝处理，避免空 token 被解释为“不过滤”。
+            sql += " AND 1 = 0"
         # 版本过滤进入查询条件，先过滤再打分，避免旧版本占用候选名额。
         # doc_id 是文档族，需与 version 组合才能区分同一文档的新旧版本。
         active = sorted(

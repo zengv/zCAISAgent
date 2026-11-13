@@ -16,9 +16,16 @@ from zcaisagent.settings import SecurityConfig
 _SECURITY = SecurityConfig(
     roles={
         "support": ["retrieve", "tool:read"],
+        "teacher": ["retrieve", "tool:read"],
+        "student": ["retrieve", "tool:read"],
         "admin": ["retrieve", "tool:read", "tool:write", "run:create", "run:approve"],
     },
-    acl_tokens_by_role={"support": ["public"], "admin": ["public", "finance"]},
+    acl_tokens_by_role={
+        "support": ["public"],
+        "teacher": ["public"],
+        "student": ["it_support"],
+        "admin": ["public", "finance"],
+    },
 )
 
 
@@ -84,6 +91,24 @@ def test_api_key_identity_uses_configured_role_mapping() -> None:
 
     assert auth.scopes == ["retrieve", "tool:read"]
     assert auth.acl_tokens == ["public"]
+
+
+def test_api_key_identity_resolves_role_by_user() -> None:
+    identity = ApiKeyIdentity(
+        "dev-key",
+        "demo",
+        _SECURITY,
+        role_by_user={"s1": "student", "t1": "teacher"},
+    )
+    student = asyncio.run(identity.authenticate("dev-key", {"user_id": "s1"}))
+    assert student.roles == ["student"]
+    assert student.scopes == ["retrieve", "tool:read"]
+    assert student.acl_tokens == ["it_support"]
+
+    unknown = asyncio.run(identity.authenticate("dev-key", {"user_id": "nobody"}))
+    assert unknown.roles == []
+    assert unknown.scopes == []
+    assert unknown.acl_tokens == []
 
 
 def test_api_key_identity_rejects_invalid_key() -> None:

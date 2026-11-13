@@ -733,6 +733,12 @@
     <input id="tenant" value="demo" spellcheck="false">
   </div>
 
+  <div class="field">
+    <label for="userId">User</label>
+    <input id="userId" value="web" spellcheck="false">
+    <p class="hint">对应 config.toml 的 [[n2sql.users]]，如 s_s1 / t_liang</p>
+  </div>
+
   <div class="meta">
     <div><span>thread</span><code id="mThread" title="点击复制">—</code></div>
     <div><span>run</span><code id="mRun" title="点击复制">—</code></div>
@@ -795,8 +801,10 @@
   // 恢复本地设置
   $('apiKey').value = localStorage.getItem('zcais.key') || 'dev-key';
   $('tenant').value = localStorage.getItem('zcais.tenant') || 'demo';
+  $('userId').value = localStorage.getItem('zcais.user') || 'web';
   $('apiKey').addEventListener('change', (e) => localStorage.setItem('zcais.key', e.target.value.trim()));
   $('tenant').addEventListener('change', (e) => localStorage.setItem('zcais.tenant', e.target.value.trim()));
+  $('userId').addEventListener('change', (e) => localStorage.setItem('zcais.user', e.target.value.trim()));
 
   $('newThread').addEventListener('click', () => {
     if (busy) return;
@@ -1135,7 +1143,7 @@
           goal,
           thread_id: threadId,
           tenant_id: $('tenant').value.trim() || 'demo',
-          user_id: 'web',
+          user_id: $('userId').value.trim() || 'web',
         }),
       });
 

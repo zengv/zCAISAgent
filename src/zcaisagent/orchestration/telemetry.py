@@ -6,10 +6,40 @@
 """
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from zcaisagent.domain.events import RunEvent
 from zcaisagent.domain.models import RunState
+from zcaisagent.ports.llm import LLMRequest, LLMResponse
+
+
+def llm_call_record(
+    request: LLMRequest,
+    response: LLMResponse | None,
+    started: float,
+    *,
+    text: str | None = None,
+) -> dict[str, Any]:
+    """整理一次 LLM 调用为轨迹数据：prompt 与原始响应原样保留，并带本次耗时。"""
+    system = "\n\n".join(m.content for m in request.messages if m.role == "system")
+    prompt = "\n\n".join(m.content for m in request.messages if m.role != "system")
+    if text is not None:
+        output = text
+    else:
+        output = response.text if response is not None else ""
+    return {
+        "purpose": request.purpose,
+        "model": response.model if response is not None else "",
+        "system": system,
+        "prompt": prompt,
+        "response": output,
+        "tokens": (
+            response.tokens_in + response.tokens_out if response is not None else 0
+        ),
+        "cost_usd": round(response.cost_usd, 6) if response is not None else 0.0,
+        "duration_ms": round((time.perf_counter() - started) * 1000, 1),
+    }
 
 
 async def emit(

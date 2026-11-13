@@ -1,4 +1,4 @@
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from pydantic import BaseModel, Field
 
@@ -27,6 +27,8 @@ class EntailmentResult(BaseModel):
 
     score: float | None = None
     response: LLMResponse | None = None
+    # 判官调用的轨迹留痕（prompt、原始响应、耗时），由实现方填充。
+    call: dict[str, Any] = Field(default_factory=dict)
 
 
 @runtime_checkable

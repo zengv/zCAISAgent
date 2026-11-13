@@ -40,6 +40,7 @@
 | `tools.mcp.<name>` | 配置了 MCP 源 | 子进程启动/工具发现失败为 `down`，不影响其他工具 |
 | `tools.openapi.<name>` | 配置了 OpenAPI 源 | spec 加载失败为 `down` |
 | `tools.sql.<name>` | 配置了 SQL 源 | 路径/白名单非法为 `down` |
+| `n2sql` | 配置了 `[n2sql]` 时 | `disabled` / 连接环境变量缺失 / `mysql host:port/db`；失败只影响智能问数，`/v1/n2sql` 返回 503 |
 
 > 检索源没有独立健康项；数据源页返回 `SourceRegistry` 的状态，并把源名映射到 `/health` 同名条目。
 > 由于当前 `/health` 不注册 `inmemory` / `bm25` / `vector` 等条目，数据源页的 `health` 通常显示 `unknown`，
@@ -57,6 +58,8 @@
 | 管理员轨迹 | `GET /v1/admin/runs/{run_id}/trace` | 同租户只读，返回 `run` 摘要 + `events` |
 | 用户轨迹 | `GET /v1/runs/{run_id}/trace` | 仅 Run 归属用户可读 |
 | 审计 | `.zcaisagent/audit.jsonl` | 追加写 JSONL：`action` / `actor` / `tenant_id` / `run_id` / `detail`（无独立时间戳） |
+| 智能问数审计 | `.zcaisagent/audit.jsonl` | `action=n2sql.query`，`detail` 含 `outcome` / `scope` / `sql_digest` / `row_count` |
+| 智能问数轨迹 | `.zcaisagent/trace.jsonl` | 节点 `n2sql`；`llm.called` 记录 `n2sql_generate` / `n2sql_answer` 的 prompt、原始响应与耗时 |
 | 轨迹 | `.zcaisagent/trace.jsonl` | 每步 `step.finished`：节点、耗时、tokens、成本、输入摘要、输出摘要 |
 | Checkpoint | `.zcaisagent/checkpoints/<run_id>.jsonl` | 每个 Run 的状态历史，最后一行为最新状态 |
 | 死信 | `.zcaisagent/dead_letter.jsonl` | Webhook 最终失败记录（事件、URL、尝试次数、状态、错误） |
@@ -85,6 +88,14 @@ Select-String -Path .zcaisagent/audit.jsonl -Pattern "admin.denied|denied"
 
 # 检索降级备注
 Select-String -Path .zcaisagent/trace.jsonl -Pattern "retrieve_error|retrieve_degraded"
+
+# 智能问数：按用户问一句（user_id 必须在 [[n2sql.users]] 中）
+Invoke-RestMethod -Method Post http://127.0.0.1:8080/v1/n2sql `
+  -Headers @{"X-API-Key"="dev-key"} `
+  -Body (@{question="S1 的成绩是多少？"; user_id="s_s1"} | ConvertTo-Json)
+
+# 智能问数审计（成功/拒绝/SQL 非法/数据库失败）
+Select-String -Path .zcaisagent/audit.jsonl -Pattern "n2sql.query"
 ```
 
 ---
@@ -96,6 +107,11 @@ Select-String -Path .zcaisagent/trace.jsonl -Pattern "retrieve_error|retrieve_de
 | **401** `{"code":"UNAUTHORIZED"}` | `X-API-Key` 缺失或与 `ZCAISAGENT_API_KEY` 不一致 | 核对请求头与服务端环境变量；审计里看 `admin.denied` 的 `reason=unauthorized` |
 | **403** `insufficient scope` | 角色缺少 `admin:read` / `admin:write` | 检查 `[security] roles` 与调用方角色；只给运维角色 admin scope |
 | **403** `run not accessible` / `thread not accessible` | 跨租户或跨用户访问 | 用归属租户/用户查询；审计 `run.cross_tenant_denied` / `thread.cross_tenant_denied` |
+| 智能问数 **503** | 未配置 `[n2sql]`、`enabled=false` 或连接环境变量缺失 | 健康板看 `n2sql` 条目；按 06 §2.6 补齐 `ZCAISAGENT_N2SQL_*` 并重启进程 |
+| 智能问数 **403** | `user_id` 未在 `[[n2sql.users]]`，或缺少 `tool:read` | 补用户目录与角色 scopes；审计 `n2sql.query` 的 `outcome=forbidden` |
+| 智能问数 **400** / `N2SQL_INVALID_SQL` | 生成 SQL 非只读、越白名单、含注释/危险对象 | 改问题或补 `tables`/`schema`；查看 trace 的 `n2sql_generate` 原始响应 |
+| 智能问数 **502** | 模型生成失败或 MySQL 不可达 | 检查模型 provider 与 MySQL 连通性；审计 `outcome=llm_failed/db_failed` |
+| 智能问数结果为空 | 数据范围过滤后无匹配 | 确认 `user_id → role` 的 `student_id`/`teacher_name` 是否正确；不要放宽过滤来"修"空结果 |
 | 模型 **429 / 5xx / 超时** | 供应商限流或故障 | 系统会按 fallback 链尝试同等级其他 provider，再向邻近 `effort_levels` 扩展；全部失败时 Run `failed`（`NODE_FAILED`）。检查 provider 密钥、`node_timeout_s`，必要时降并发 |
 | 检索 **degraded** | 单源超时/异常/embedding 不可用 | trace `output.notes` 出现 `retrieve_error:<source>` / `retrieve_degraded:<source>`；其余源继续返回。Studio 数据源页可临时停用问题源，或检查 embedding 配置 |
 | PG **down** | DSN 错误、网络或 PG 未启动 | 健康板 `database=down`，系统已回退内存 + 种子语料。修复 DSN / 启动 PG 后**重启进程**（连接在启动时建立） |
@@ -133,6 +149,7 @@ Select-String -Path .zcaisagent/trace.jsonl -Pattern "retrieve_error|retrieve_de
 | 配置 | `config.toml`、`configs/` | 不含密钥；密钥在环境变量 |
 | 评估 | `data/eval/latest.json`、`data/eval/baselines/` | Studio 质量看板 |
 | 数据库 | Postgres | 启用 pgvector 时 `pg_dump -Fc -d <db> -f backup.dump` |
+| 智能问数业务库 | 外部 MySQL | 由 DBA 按业务库策略备份；本服务只读，不负责写入与恢复 |
 
 建议每日增量备份 `.zcaisagent/` 与 `data/`，每周全量；备份文件与运行目录分离存放，并限制访问权限。
 

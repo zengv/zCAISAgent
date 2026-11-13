@@ -1,3 +1,4 @@
+import asyncio
 import math
 import time
 
@@ -32,6 +33,10 @@ class VectorRetriever:
         self.chunks: list[Chunk] = []
         self._vectors: dict[str, list[float]] | None = None
         self._failed = False
+        # 同一 run 的多个 query 变体会并发检索，锁保证全量 chunk 只向量化一次。
+        self._vectors_lock = asyncio.Lock()
+        self._query_vectors: dict[str, list[float]] = {}
+        self._query_lock = asyncio.Lock()
 
     def add(self, chunks: list[Chunk]) -> None:
         if not chunks:
@@ -46,23 +51,44 @@ class VectorRetriever:
     async def _ensure_vectors(self) -> None:
         if self._vectors is not None or self._failed:
             return
-        texts = [f"{chunk.title} {chunk.content}" for chunk in self.chunks]
-        vectors = await self.embedder.embed(texts)
-        if len(vectors) != len(self.chunks):
-            self._failed = True
-            raise ValueError("embedding count mismatch")
-        self._vectors = {
-            chunk.id: vector
-            for chunk, vector in zip(self.chunks, vectors, strict=False)
-        }
+        async with self._vectors_lock:
+            if self._vectors is not None or self._failed:
+                return
+            texts = [f"{chunk.title} {chunk.content}" for chunk in self.chunks]
+            vectors = await self.embedder.embed(texts)
+            if len(vectors) != len(self.chunks):
+                self._failed = True
+                raise ValueError("embedding count mismatch")
+            self._vectors = {
+                chunk.id: vector
+                for chunk, vector in zip(self.chunks, vectors, strict=False)
+            }
+
+    async def _query_vector(self, query: str) -> list[float]:
+        cached = self._query_vectors.get(query)
+        if cached is not None:
+            return cached
+        async with self._query_lock:
+            cached = self._query_vectors.get(query)
+            if cached is not None:
+                return cached
+            vector = (await self.embedder.embed([query]))[0]
+            if len(self._query_vectors) >= 512:
+                self._query_vectors.clear()
+            self._query_vectors[query] = vector
+            return vector
 
     async def retrieve(self, req: RetrieveRequest, ctx: AuthContext) -> RetrieveResult:
         started = time.perf_counter()
         try:
-            await self._ensure_vectors()
-            query_vector = (await self.embedder.embed([req.query]))[0]
+            # 全量 chunk 向量化与 query 向量化互不依赖，首次检索并发发起。
+            _, query_vector = await asyncio.gather(
+                self._ensure_vectors(), self._query_vector(req.query)
+            )
         except Exception:  # noqa: BLE001 - embedding 服务不可用时降级返回
             self._failed = True
+            return RetrieveResult(source_name=self.source_name, degraded=True)
+        if self._vectors is None:
             return RetrieveResult(source_name=self.source_name, degraded=True)
 
         acl = set(req.acl_tokens)

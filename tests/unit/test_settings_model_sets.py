@@ -45,6 +45,47 @@ reasoning_effort = "high"
     assert settings.resolve_effort("never-seen-purpose") == "low"
 
 
+def test_model_keys_prefer_env_file_over_process_env(tmp_path, monkeypatch) -> None:
+    _clear_env(monkeypatch)
+    monkeypatch.setenv("AI_KEY_DS", "from-process")
+    _, env = _write_config(
+        tmp_path,
+        """
+model_provider = "deepseek"
+
+[model_providers.deepseek]
+name = "DS"
+model = "ds-flash"
+base_url = "https://ds.example"
+key_env = "AI_KEY_DS"
+reasoning_effort = "high"
+""",
+        env_body="AI_KEY_DS=from-dotenv\n",
+    )
+    settings = Settings.from_env(env_file=env, config_file=tmp_path / "config.toml")
+    assert settings.model_providers["deepseek"].api_key == "from-dotenv"
+
+
+def test_model_key_falls_back_to_process_env(tmp_path, monkeypatch) -> None:
+    _clear_env(monkeypatch)
+    monkeypatch.setenv("AI_KEY_DS", "from-process")
+    _, env = _write_config(
+        tmp_path,
+        """
+model_provider = "deepseek"
+
+[model_providers.deepseek]
+name = "DS"
+model = "ds-flash"
+base_url = "https://ds.example"
+key_env = "AI_KEY_DS"
+reasoning_effort = "high"
+""",
+    )
+    settings = Settings.from_env(env_file=env, config_file=tmp_path / "config.toml")
+    assert settings.model_providers["deepseek"].api_key == "from-process"
+
+
 def test_m2_sections_are_parsed(tmp_path, monkeypatch) -> None:
     _clear_env(monkeypatch)
     _, env = _write_config(

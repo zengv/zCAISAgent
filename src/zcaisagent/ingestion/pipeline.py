@@ -18,6 +18,7 @@ def ingest_directory(
     tenant_id: str = "demo",
     acl: list[str] | None = None,
     parent_max_chars: int | None = None,
+    acl_by_file: dict[str, list[str]] | None = None,
 ) -> list[Chunk]:
     chunks: list[Chunk] = []
     if not directory.exists():
@@ -33,13 +34,15 @@ def ingest_directory(
             continue
         # 同类文档的多个版本共用族名作为 doc_id，版本号单独记录，供检索取最新版。
         doc_id, version = split_document_id(path.stem)
+        relative = path.relative_to(directory).as_posix()
+        file_acl = (acl_by_file or {}).get(relative) or (acl_by_file or {}).get(path.name)
         chunks.extend(
             chunk_document(
                 doc_id=doc_id,
                 title=_title(path, text),
                 text=text,
                 tenant_id=tenant_id,
-                acl=acl,
+                acl=file_acl or acl,
                 uri=str(path),
                 version=version,
                 parent_max_chars=parent_max_chars,

@@ -1216,7 +1216,18 @@
       });
     }
 
-    const events = ((trace && trace.events) || []).filter((evt) => evt.type === 'step.finished');
+    const allEvents = (trace && trace.events) || [];
+    const events = allEvents.filter((evt) => evt.type === 'step.finished');
+    // 把步骤执行期间的 LLM 调用归到该步骤，展开时可直接看到 prompt 与原始响应。
+    const llmByStep = new Map();
+    let pendingLlms = [];
+    allEvents.forEach((evt) => {
+      if (evt.type === 'llm.called') pendingLlms.push(evt);
+      else if (evt.type === 'step.finished') {
+        if (pendingLlms.length) llmByStep.set(evt, pendingLlms);
+        pendingLlms = [];
+      }
+    });
     const body = $('traceBody');
     body.textContent = '';
     $('traceNoEvents').hidden = events.length > 0;
@@ -1243,6 +1254,23 @@
       detailCell.appendChild(inputBlock);
       detailCell.appendChild(el('div', 'detail-label', '返回 output'));
       detailCell.appendChild(outputBlock);
+      (llmByStep.get(evt) || []).forEach((call, index) => {
+        const callData = call.data || {};
+        detailCell.appendChild(el(
+          'div',
+          'detail-label',
+          'LLM 调用 ' + (index + 1) + ' · ' + (callData.purpose || '—')
+            + ' · ' + fmtInt(callData.tokens) + ' tokens'
+            + (callData.duration_ms === undefined || callData.duration_ms === null
+              ? ''
+              : ' · ' + fmtMs(callData.duration_ms))
+        ));
+        detailCell.appendChild(el('pre', '', [
+          'system:', callData.system || '—', '',
+          'prompt:', callData.prompt || '—', '',
+          'response:', callData.response || '—',
+        ].join('\n')));
+      });
       detailRow.appendChild(detailCell);
 
       row.addEventListener('click', () => {

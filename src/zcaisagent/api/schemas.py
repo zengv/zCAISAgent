@@ -124,6 +124,23 @@ def build_metrics(state: RunState) -> MetricsOut:
     )
 
 
+class N2SQLRequest(BaseModel):
+    question: str = Field(min_length=1)
+    user_id: str = "dev"
+    tenant_id: str | None = None
+
+
+class N2SQLResponse(BaseModel):
+    question: str
+    answer: str
+    sql: str
+    columns: list[str] = Field(default_factory=list)
+    rows: list[dict] = Field(default_factory=list)
+    row_count: int = 0
+    scope: str = ""
+    latency_ms: int = 0
+
+
 def auth_meta(request: RunRequest) -> dict:
     return {
         "tenant_id": request.tenant_id or "",

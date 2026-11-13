@@ -75,6 +75,27 @@ def test_model_fallback_failure_keeps_rule_result() -> None:
     assert patch.level == AutonomyLevel.L1_FAST
 
 
+def test_ranking_question_is_detected_as_data_query() -> None:
+    ctx = make_ctx()
+    ctx.n2sql = object()
+    patch = asyncio.run(analyze_node(make_state("2025年语文排名前10名？"), ctx))
+    assert patch.analysis["data_query"] is True
+    assert "data_query_text" not in patch.analysis
+
+
+def test_wenshu_prefix_triggers_data_query_and_is_stripped() -> None:
+    ctx = make_ctx()
+    ctx.n2sql = object()
+    patch = asyncio.run(analyze_node(make_state("问数：2025年语文排名前10名？"), ctx))
+    assert patch.analysis["data_query"] is True
+    assert patch.analysis["data_query_text"] == "2025年语文排名前10名？"
+
+
+def test_data_query_is_ignored_when_n2sql_disabled() -> None:
+    patch = _analyze("2025年语文排名前10名？")
+    assert "data_query" not in patch.analysis
+
+
 def test_followup_uses_recent_context_without_rewriting_goal() -> None:
     state = make_state("它呢？").model_copy(
         update={

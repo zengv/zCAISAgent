@@ -33,7 +33,7 @@ def test_chat_streams_meta_tokens_done() -> None:
     events = _parse_sse(response.text)
     names = [name for name, _ in events]
     assert names[0] == "meta"
-    assert "token" in names
+    # L1 走非流式一次性 JSON 合成，不再逐个 token 推送；正文由 done 事件给出。
     assert names[-1] == "done"
 
     done = events[-1][1]

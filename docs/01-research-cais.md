@@ -18,12 +18,14 @@
 二者不是两个产品，而是同一个运行时的两种 **ActionSpace 配置**：
 
 ```
-通用 Agent   = Agent(ActionSpace = {Retrieve, ToolCall, CodeExec, Browse, AskUser, ...})
+通用 Agent   = Agent(ActionSpace = {Retrieve, ToolCall, DataQuery, CodeExec, Browse, AskUser, ...})
 Agentic RAG  = Agent(ActionSpace ⊇ {Retrieve(source, query, k), Answer, Verify, AskUser})
 CAIS         = Orchestrator(Graph(Components), Contracts, Evaluation, Observability)
 ```
 
 差别只在"动作集合"和"策略配置"，不在架构。统一后，项目只需要维护 **一套状态机、一套预算/终止机制、一套证据抽象、一套追踪与评估**，通用 Agent 能力可以随插随用，不会分裂成两套代码。`zCAISAgent` 以通用 Agent 为默认形态，Agentic RAG 作为其"知识密集任务"能力包存在。
+
+智能问数（NL2SQL）同理：它不是一个独立产品线，而是 `DataQuery` 动作——模型负责"问题 → SQL"的语义映射，运行时负责只读校验、表白名单与数据范围强制注入，再把查询结果折回 `Evidence` 参与统一的引用与校验。
 
 **结论三｜图中流程是"最小可行 Agentic RAG"（L1 级），覆盖了 4 个关键决策，但缺少 7 类生产必需能力。**
 它值得学习的是**闭环思想**（改写 → 判断 → 选源 → 检索 → 生成 → 相关性校验 → 回退），但不能照搬。直接实现会在**成本、延迟、收敛性、可审计性**四个维度出问题，其中"回退到原始 Query"和"无预算/无终止条件"是最危险的两处设计缺陷。本项目的目标架构应在图的基础上补齐：**自适应路由、证据评分与重排、claim 级引用校验、预算与早停、记忆、权限治理、轨迹评估**。
