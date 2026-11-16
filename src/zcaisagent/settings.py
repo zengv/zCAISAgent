@@ -288,16 +288,28 @@ class N2SQLConfig:
     """智能问数（NL2SQL）配置；连接参数只从环境变量读取，避免密钥落盘。"""
 
     enabled: bool = False
+    # database：连接外部数据库；files：把配置目录中的文件装入 SQLite 内存库。
+    source: Literal["database", "files"] = "database"
+    dialect: Literal["mysql", "postgres", "sqlite", "oracle", "mssql"] = "mysql"
     host: str = ""
     port: int = 3306
     user: str = ""
     password: str = ""
     database: str = ""
+    # SQL Server 的 ODBC 驱动名；留空使用默认值。
+    driver: str = ""
     schema: str = ""
     tables: list[str] = field(default_factory=list)
     max_rows: int = 100
     timeout_s: float = 5.0
     users: dict[str, N2SQLUserScope] = field(default_factory=dict)
+    # 文件数据源：只读目录、允许的扩展名与加载上限。
+    files_dir: str = ""
+    files_extensions: tuple[str, ...] = (".csv", ".json", ".xlsx", ".xlsm")
+    files_max_rows: int = 20000
+    files_max_bytes: int = 20 * 1024 * 1024
+    # 文件数据没有行级权限定义，默认仅管理员可查询。
+    files_admin_only: bool = True
 
 
 @dataclass(frozen=True)
@@ -856,16 +868,49 @@ class Settings:
                     teacher_name=str(item.get("teacher_name") or ""),
                 )
             port_env = str(raw_n2sql.get("port_env") or "")
+            dialect = str(raw_n2sql.get("dialect") or "mysql").strip().lower()
+            dialect = {
+                "mariadb": "mysql",
+                "postgresql": "postgres",
+                "pg": "postgres",
+                "sqlite3": "sqlite",
+                "ora": "oracle",
+                "sqlserver": "mssql",
+                "sql_server": "mssql",
+            }.get(dialect, dialect)
+            if dialect not in {"mysql", "postgres", "sqlite", "oracle", "mssql"}:
+                dialect = "mysql"
+            source = str(raw_n2sql.get("source") or "database").strip().lower()
+            if source not in {"database", "files"}:
+                source = "database"
+            raw_files = raw_n2sql.get("files") or {}
+            if not isinstance(raw_files, dict):
+                raw_files = {}
+            raw_extensions = raw_files.get("extensions") or [
+                ".csv",
+                ".json",
+                ".xlsx",
+                ".xlsm",
+            ]
+            files_extensions = tuple(
+                str(item).lower() for item in raw_extensions if str(item).strip()
+            )
             n2sql = N2SQLConfig(
                 enabled=_env_flag(
                     f"{ENV_PREFIX}N2SQL_ENABLED",
                     bool(raw_n2sql.get("enabled", False)),
+                ),
+                source=cast('Literal["database", "files"]', source),
+                dialect=cast(
+                    'Literal["mysql", "postgres", "sqlite", "oracle", "mssql"]',
+                    dialect,
                 ),
                 host=_conn_value("host_env"),
                 port=int(_env_value(port_env) or raw_n2sql.get("port", 3306)),
                 user=_conn_value("user_env"),
                 password=_conn_value("password_env"),
                 database=_conn_value("database_env"),
+                driver=str(raw_n2sql.get("driver") or ""),
                 schema=str(raw_n2sql.get("schema") or ""),
                 tables=[str(item) for item in raw_n2sql.get("tables", []) or []],
                 max_rows=int(
@@ -877,6 +922,22 @@ class Settings:
                     )
                 ),
                 users=users,
+                files_dir=_env_value(str(raw_files.get("dir_env") or ""))
+                or str(raw_files.get("dir") or ""),
+                files_extensions=files_extensions,
+                files_max_rows=int(
+                    env.get(
+                        f"{ENV_PREFIX}N2SQL_FILES_MAX_ROWS",
+                        raw_files.get("max_rows", 20000),
+                    )
+                ),
+                files_max_bytes=int(
+                    env.get(
+                        f"{ENV_PREFIX}N2SQL_FILES_MAX_BYTES",
+                        raw_files.get("max_bytes", 20 * 1024 * 1024),
+                    )
+                ),
+                files_admin_only=bool(raw_files.get("admin_only", True)),
             )
 
         raw_secret = cfg.get("secret")

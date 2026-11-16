@@ -7,6 +7,7 @@ import re
 import time
 from typing import Any
 
+from zcaisagent.capabilities.n2sql.dialects import prompt_hint
 from zcaisagent.capabilities.n2sql.errors import N2SQLError
 from zcaisagent.capabilities.n2sql.permissions import resolve_scope
 from zcaisagent.capabilities.n2sql.sql_guard import apply_scope, ensure_limit, validate_sql
@@ -17,7 +18,7 @@ from zcaisagent.ports.security import AuditEvent, AuditPort, AuthContext
 from zcaisagent.settings import N2SQLConfig
 
 _GENERATE_SYSTEM = (
-    "你是 MySQL 数据分析助手。只输出一个 JSON 对象："
+    "你是数据库数据分析助手。只输出一个 JSON 对象："
     '{"sql": string, "explanation": string}。'
     "规则：只使用给定表和列；只输出单条 SELECT/WITH；禁止多语句、注释、DDL/DML、"
     "系统库与危险函数；多表查询必须显式 JOIN，禁止逗号连接；"
@@ -95,12 +96,15 @@ class N2SQLService(N2SQLPort):
         *,
         audit: AuditPort | None = None,
         llm_timeout_s: float = 30.0,
+        skill_instructions: str = "",
     ) -> None:
         self._config = config
         self._llm = llm
         self._executor = executor
         self._audit = audit
         self._llm_timeout_s = llm_timeout_s
+        self._skill_instructions = skill_instructions.strip()
+        self._dialect = config.dialect
 
     async def ask(self, question: str, auth: AuthContext) -> N2SQLResult:
         started = time.monotonic()
@@ -117,6 +121,15 @@ class N2SQLService(N2SQLPort):
                 "N2SQL_FORBIDDEN",
                 f"用户 {auth.user_id} 未配置数据权限，已拒绝查询",
                 started,
+            )
+        if (
+            self._config.source == "files"
+            and self._config.files_admin_only
+            and scope.role != "admin"
+        ):
+            await self._record(auth, "forbidden", "", 0, scope=scope.label)
+            return self._fail(
+                "N2SQL_FORBIDDEN", "文件数据源仅管理员可查询", started
             )
 
         tokens_in = tokens_out = 0
@@ -138,9 +151,9 @@ class N2SQLService(N2SQLPort):
             )
 
         try:
-            sql = validate_sql(generated, self._config.tables)
-            sql = apply_scope(sql, scope)
-            sql = ensure_limit(sql, self._config.max_rows)
+            sql = validate_sql(generated, self._config.tables, self._dialect)
+            sql = apply_scope(sql, scope, self._dialect, self._config.tables)
+            sql = ensure_limit(sql, self._config.max_rows, self._dialect)
         except N2SQLError as exc:
             await self._record(auth, "invalid_sql", generated, 0, scope=scope.label)
             return self._fail(exc.code, exc.message, started, llm_trace)
@@ -197,10 +210,13 @@ class N2SQLService(N2SQLPort):
             if schema
             else f"可用表：{tables}\n\n问题：{question}"
         )
+        system = f"{_GENERATE_SYSTEM}\n\n{prompt_hint(self._dialect)}"
+        if self._skill_instructions:
+            system = f"{system}\n\n技能补充：\n{self._skill_instructions}"
         response = await self._llm.complete(
             LLMRequest(
                 messages=[
-                    Message(role="system", content=_GENERATE_SYSTEM),
+                    Message(role="system", content=system),
                     Message(role="user", content=content),
                 ],
                 purpose="n2sql_generate",
@@ -213,7 +229,7 @@ class N2SQLService(N2SQLPort):
         record = {
             "purpose": "n2sql_generate",
             "model": response.model,
-            "system": _GENERATE_SYSTEM,
+            "system": system,
             "prompt": content,
             "response": response.text,
             "tokens": response.tokens_in + response.tokens_out,

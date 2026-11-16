@@ -169,10 +169,16 @@ openapi = {}
 sql = {}
 
 # —— 智能问数（NL2SQL） ——
-# MySQL 连接只从 *_env 指向的环境变量读取；password 仅接受环境变量，避免密钥进入 git。
-# 连接参数缺失时 /v1/n2sql 返回 503，聊天链路不会触发数据查询。
+# 连接参数只从 *_env 指向的环境变量读取；password 仅接受环境变量，避免密钥进入 git。
+# source=database 连接外部库；source=files 读取 [n2sql.files] 目录中的文件。
+# 连接参数缺失或驱动不可用时 /v1/n2sql 返回 503，聊天链路不会触发数据查询。
 [n2sql]
 enabled = true
+source = "database"
+# 支持 mysql / postgres / sqlite / oracle / mssql；sqlite 时 database_env 指向文件路径。
+dialect = "mysql"
+# SQL Server 的 ODBC 驱动名，留空使用默认值。
+driver = ""
 # 同时限制聊天返回与 Excel 导出的最大行数；返回行数达到该值时前端会提示可能截断。
 max_rows = 5000
 timeout_s = 30.0
@@ -204,6 +210,16 @@ CREATE TABLE scores (
   score DECIMAL(5,1) NOT NULL COMMENT '考试分数'
 ) COMMENT='学生成绩记录表';
 """
+
+# 文件数据源：source = "files" 时把目录内文件装入 SQLite 内存库后查询。
+# 每个文件映射为一张表；表名取文件名中的 ASCII 片段，冲突时追加序号。
+[n2sql.files]
+dir = "data/n2sql_files"
+extensions = [".csv", ".json", ".xlsx", ".xlsm"]
+max_rows = 20000
+max_bytes = 20971520
+# 文件数据没有行级权限定义，默认仅管理员可查询。
+admin_only = true
 
 # —— 模拟用户 → 数据可见范围（未知 user_id 默认拒绝） ——
 # role=admin 不限制；teacher 按 teacher_name 限定本人课程；

@@ -99,3 +99,27 @@ def test_unsafe_sql_is_rejected() -> None:
     assert not result.ok
     assert result.error_code == "N2SQL_INVALID_SQL"
     assert executor.sqls == []
+
+
+class _CaptureLLM:
+    def __init__(self) -> None:
+        self.systems: list[str] = []
+        self.texts = ['{"sql":"SELECT score FROM scores","explanation":"ok"}', "完成"]
+
+    async def complete(self, request):
+        self.systems.append(request.messages[0].content)
+        return LLMResponse(text=self.texts.pop(0), tokens_in=1, tokens_out=1)
+
+
+def test_skill_instructions_are_injected_into_generation_prompt() -> None:
+    llm = _CaptureLLM()
+    service = N2SQLService(
+        _config(admin=N2SQLUserScope("admin", "admin")),
+        llm,
+        _Executor([{"score": 90.0}]),
+        skill_instructions="只生成只读查询。",
+    )
+    result = asyncio.run(service.ask("查询成绩", _auth("admin")))
+    assert result.ok
+    assert "只生成只读查询。" in llm.systems[0]
+

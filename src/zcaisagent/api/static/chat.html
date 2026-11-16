@@ -1660,6 +1660,31 @@
     return { max: step * count, step };
   }
 
+  // 维度列优先用名称（学生姓名/课程名），跳过 ID 类列；数值列排除年份与 ID。
+  const NAME_COLUMN = /name|姓名|名称|标题|title/i;
+  const ID_COLUMN = /(^|[^a-z])id($|[^a-z])|编号|编码|号码/i;
+  const VALUE_COLUMN = /score|成绩|分数|得分|销售额|金额|数量|count|total|price|价格/i;
+  const YEAR_COLUMN = /year|年份|年度|学年/i;
+
+  function pickLabelColumn(cols, numeric) {
+    const candidates = cols.filter((column) => !numeric.includes(column));
+    if (!candidates.length) return null;
+    return (
+      candidates.find((column) => NAME_COLUMN.test(column) && !ID_COLUMN.test(column)) ||
+      candidates.find((column) => !ID_COLUMN.test(column)) ||
+      candidates[0]
+    );
+  }
+
+  function pickNumericColumns(numeric) {
+    const preferred = numeric.filter(
+      (column) => VALUE_COLUMN.test(column) && !YEAR_COLUMN.test(column) && !ID_COLUMN.test(column)
+    );
+    if (preferred.length) return preferred;
+    const kept = numeric.filter((column) => !YEAR_COLUMN.test(column) && !ID_COLUMN.test(column));
+    return kept.length ? kept : numeric;
+  }
+
   function prepareChartData(columns, rows) {
     const cols = columns && columns.length ? columns : Object.keys((rows && rows[0]) || {});
     if (!cols.length || !rows || !rows.length) return { labels: [], series: [] };
@@ -1675,8 +1700,8 @@
       return seen;
     });
 
-    let labelColumn = cols.find((column) => !numeric.includes(column));
-    let numericColumns = numeric;
+    let labelColumn = pickLabelColumn(cols, numeric);
+    let numericColumns = pickNumericColumns(numeric);
     // 年份等维度也可能被解析成数值；首列呈时间序列时优先作为横轴。
     if (!labelColumn && numeric.length > 1) {
       const first = cols[0];
@@ -1777,13 +1802,17 @@
         tip.textContent = `${label} · ${item.name}：${formatNumber(value)}`;
         rect.appendChild(tip);
         svg.appendChild(rect);
-        if (series.length === 1 && labels.length <= 12 && barH > 16) {
+        if (series.length === 1 && labels.length <= 30 && barH > 16) {
           svg.appendChild(
             svgText(
               groupX + seriesIndex * barW + (barW - 3) / 2,
               margin.top + plotH - barH - 6,
               formatNumber(value),
-              { 'text-anchor': 'middle', fill: '#e9e7dc', 'font-size': 10 }
+              {
+                'text-anchor': 'middle',
+                fill: '#e9e7dc',
+                'font-size': labels.length > 12 ? 9 : 10,
+              }
             )
           );
         }

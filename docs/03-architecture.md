@@ -879,8 +879,8 @@ flowchart LR
     R -->|"未命中"| K["知识检索链路"]
     G --> V["只读校验<br/>单条 SELECT/WITH · 表白名单<br/>禁注释/DDL/DML/系统库/危险函数"]
     V --> S["行级权限注入<br/>白名单表 → 带 WHERE 的派生表"]
-    S --> L["自动补 LIMIT"]
-    L --> D[("MySQL 只读执行")]
+    S --> L["按方言补行数限制"]
+    L --> D[("只读执行<br/>MySQL/PG/SQLite/Oracle/MSSQL<br/>或文件内存库")]
     D --> N["LLM 归纳答案<br/>n2sql_answer"]
     D -->|"归纳失败"| F["结构化结果摘要"]
     N --> E["Evidence + Answer + Verdict"]
@@ -891,10 +891,11 @@ flowchart LR
 |---|---|---|
 | **生成** | `N2SQLService._generate`（purpose `n2sql_generate`，关闭思考） | 只用 `tables` 与 `schema` 提供的表和列；只输出一个 JSON `{sql, explanation}` |
 | **解析** | `_parse_sql` | 依次尝试 JSON、被截断的 `sql` 字段、SQL 代码块、裸 `SELECT/WITH`；无法解析即失败 |
-| **只读校验** | `sql_guard.validate_sql` | 单条语句、禁止注释、只允许 `SELECT/WITH`、写/危险关键字黑名单、系统库与 `load_file/sleep/benchmark` 黑名单、表白名单、禁止逗号连接、CTE 名不得与白名单表重名 |
-| **权限注入** | `sql_guard.apply_scope` | 把 `FROM/JOIN` 的白名单表替换为 `(SELECT * FROM t WHERE <predicate>) AS alias`；条件由服务端生成，模型 SQL 无法绕过 |
-| **行数上限** | `sql_guard.ensure_limit` | 无 `LIMIT` 时补 `max_rows`；执行侧 `fetchmany(max_rows)` 二次兜底 |
-| **执行** | `MySqlReadonlyClient`（`adapters/store/mysql.py`） | 单次查询新建连接、线程池执行、`connect/read/write_timeout`、会话级 `MAX_EXECUTION_TIME`、结果值 JSON 化 |
+| **只读校验** | `sql_guard.validate_sql` | 单条语句、禁止注释、只允许 `SELECT/WITH`、写/危险关键字黑名单、按方言拦截系统对象与 `load_file/pg_sleep/xp_cmdshell` 等危险函数、表白名单、禁止逗号连接、CTE 名不得与白名单表重名 |
+| **权限注入** | `sql_guard.apply_scope` | 把 `FROM/JOIN` 的白名单表替换为 `(SELECT * FROM t WHERE <predicate>) AS alias`；标识符按方言引用；条件由服务端生成，模型 SQL 无法绕过 |
+| **行数上限** | `sql_guard.ensure_limit` | MySQL/PostgreSQL/SQLite 补 `LIMIT`，Oracle 补 `FETCH FIRST n ROWS ONLY`，SQL Server 由 `fetchmany` 兜底 |
+| **执行** | `adapters/store/*_query.py` | 按 `dialect` 装配 MySQL/PostgreSQL/SQLite/Oracle/SQL Server 只读客户端；单次查询新建连接、线程池执行、结果值 JSON 化；`source=files` 时使用 SQLite 内存库 |
+| **文件数据源** | `capabilities/n2sql/files.py` | 启动时把配置目录内 CSV/JSON/Excel 装入 SQLite 内存库并推断列类型；加载后 `PRAGMA query_only`；默认仅管理员可查 |
 | **归纳** | `N2SQLService._answer`（purpose `n2sql_answer`） | 只根据查询结果作答，不编造数字；失败回退结构化摘要 |
 | **审计** | `N2SQLService._record` | `n2sql.query`：`outcome` / `scope` / `sql_digest` / `row_count`；审计失败不阻断查询 |
 
@@ -916,7 +917,7 @@ flowchart LR
 | `N2SQL_LLM_FAILED` | 502 | SQL 生成失败或无法解析 |
 | `N2SQL_DB_FAILED` | 502 | 数据库连接或执行失败 |
 
-**配置与降级**：`[n2sql]` 见 §17；连接参数只从 `*_env` 指向的环境变量读取。未配置、`enabled=false`、连接参数缺失或驱动不可用时，容器把 `n2sql` 置为 `None`，`/v1/n2sql` 返回 503，聊天链路不触发数据查询；健康板记录 `n2sql` 条目。
+**配置与降级**：`[n2sql]` 见 §17；连接参数只从 `*_env` 指向的环境变量读取。`source=database` 时按 `dialect` 装配只读执行器（Oracle/SQL Server 需安装 `db-oracle`/`db-mssql` extra）；`source=files` 时读取 `[n2sql.files]` 目录并装入 SQLite 内存库。未配置、`enabled=false`、连接参数缺失或驱动不可用时，容器把 `n2sql` 置为 `None`，`/v1/n2sql` 返回 503，聊天链路不触发数据查询；健康板记录 `n2sql` 条目。
 
 ---
 
@@ -1361,6 +1362,9 @@ compact_keep = 1
 
 [n2sql]                                     # 智能问数（NL2SQL）；连接参数只从环境变量读取
 enabled = true
+source = "database"                         # database | files
+dialect = "mysql"                           # mysql | postgres | sqlite | oracle | mssql
+driver = ""                                 # SQL Server 的 ODBC 驱动名
 max_rows = 100
 timeout_s = 30.0
 host_env = "ZCAISAGENT_N2SQL_HOST"
@@ -1370,6 +1374,13 @@ password_env = "ZCAISAGENT_N2SQL_PASSWORD"
 database_env = "ZCAISAGENT_N2SQL_DATABASE"
 tables = ["courses", "students", "scores"]
 schema = "…DDL…"
+
+[n2sql.files]                               # source = "files" 时生效：文件装入 SQLite 内存库
+dir = "data/n2sql_files"
+extensions = [".csv", ".json", ".xlsx", ".xlsm"]
+max_rows = 20000
+max_bytes = 20971520
+admin_only = true                           # 文件数据无行级权限，默认仅管理员可查
 
 [[n2sql.users]]                             # 模拟用户 → 数据可见范围；未知用户拒绝
 user_id = "s_s1"

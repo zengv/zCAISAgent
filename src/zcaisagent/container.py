@@ -5,7 +5,7 @@ import os
 import time
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -282,12 +282,79 @@ def build_trace(
     return trace
 
 
+def _n2sql_required_fields(config: Any) -> tuple[str, ...]:
+    if config.source == "files":
+        return ("files_dir",)
+    if config.dialect == "sqlite":
+        return ("database",)
+    return ("host", "user", "password", "database")
+
+
+def _build_n2sql_executor(config: Any) -> Any:
+    dialect = config.dialect
+    if dialect == "mysql":
+        from zcaisagent.adapters.store.mysql import MySqlReadonlyClient, mysql_available
+
+        if not mysql_available():
+            raise RuntimeError("pymysql is not installed")
+        return MySqlReadonlyClient(
+            host=config.host,
+            port=config.port,
+            user=config.user,
+            password=config.password,
+            database=config.database,
+            timeout_s=config.timeout_s,
+        )
+    if dialect == "postgres":
+        from zcaisagent.adapters.store.postgres_query import PostgresReadonlyClient
+
+        return PostgresReadonlyClient(
+            host=config.host,
+            port=config.port,
+            user=config.user,
+            password=config.password,
+            database=config.database,
+            timeout_s=config.timeout_s,
+        )
+    if dialect == "sqlite":
+        from zcaisagent.adapters.store.sqlite_query import SqliteReadonlyClient
+
+        return SqliteReadonlyClient(
+            database=config.database, timeout_s=config.timeout_s
+        )
+    if dialect == "oracle":
+        from zcaisagent.adapters.store.oracle_query import OracleReadonlyClient
+
+        return OracleReadonlyClient(
+            host=config.host,
+            port=config.port,
+            user=config.user,
+            password=config.password,
+            database=config.database,
+            timeout_s=config.timeout_s,
+        )
+    if dialect == "mssql":
+        from zcaisagent.adapters.store.mssql_query import MsSqlReadonlyClient
+
+        return MsSqlReadonlyClient(
+            host=config.host,
+            port=config.port,
+            user=config.user,
+            password=config.password,
+            database=config.database,
+            driver=config.driver,
+            timeout_s=config.timeout_s,
+        )
+    raise RuntimeError(f"unsupported sql dialect: {dialect}")
+
+
 def build_n2sql(
     settings: Settings,
     llm: LLMPort,
     *,
     audit: AuditPort | None = None,
     health: HealthBoard | None = None,
+    skills: InMemorySkillRegistry | None = None,
 ) -> N2SQLService | None:
     """按 ``[n2sql]`` 装配智能问数；连接参数缺失或驱动不可用时降级为未启用。"""
     config = settings.n2sql
@@ -295,14 +362,7 @@ def build_n2sql(
         _report_health(health, "n2sql", True, "disabled", owner="n2sql")
         return None
     missing = [
-        name
-        for name, value in (
-            ("host", config.host),
-            ("user", config.user),
-            ("password", config.password),
-            ("database", config.database),
-        )
-        if not value
+        name for name in _n2sql_required_fields(config) if not getattr(config, name, "")
     ]
     if missing:
         _report_health(
@@ -313,35 +373,44 @@ def build_n2sql(
             owner="n2sql",
         )
         return None
+    effective = config
     try:
-        from zcaisagent.adapters.store.mysql import MySqlReadonlyClient, mysql_available
+        if config.source == "files":
+            from zcaisagent.capabilities.n2sql.files import FileTableExecutor
 
-        if not mysql_available():
-            raise RuntimeError("pymysql is not installed")
-        executor = MySqlReadonlyClient(
-            host=config.host,
-            port=config.port,
-            user=config.user,
-            password=config.password,
-            database=config.database,
-            timeout_s=config.timeout_s,
-        )
+            file_executor = FileTableExecutor(
+                config.files_dir,
+                extensions=config.files_extensions,
+                max_rows=config.files_max_rows,
+                max_file_bytes=config.files_max_bytes,
+            )
+            effective = replace(
+                config,
+                dialect="sqlite",
+                schema=file_executor.schema,
+                tables=list(file_executor.tables),
+            )
+            detail = f"files {len(file_executor.tables)} tables"
+        else:
+            file_executor = None
+            detail = (
+                f"{config.dialect} {config.host}:{config.port}/{config.database}"
+                if config.dialect != "sqlite"
+                else f"sqlite {config.database}"
+            )
+        executor = file_executor or _build_n2sql_executor(config)
     except Exception as exc:  # noqa: BLE001 - 外部数据库失败不阻断启动
         _report_health(health, "n2sql", False, str(exc), owner="n2sql")
         return None
-    _report_health(
-        health,
-        "n2sql",
-        True,
-        f"mysql {config.host}:{config.port}/{config.database}",
-        owner="n2sql",
-    )
+    _report_health(health, "n2sql", True, detail, owner="n2sql")
+    skill = skills.get("sql_queries") if skills is not None else None
     return N2SQLService(
-        config,
+        effective,
         llm,
         executor,
         audit=audit,
         llm_timeout_s=max(settings.node_timeout_s, 10.0),
+        skill_instructions=skill.instructions if skill is not None else "",
     )
 
 
@@ -630,8 +699,6 @@ def build_container(settings: Settings | None = None, ingest: bool = True) -> Co
     secret = build_secret(settings, health)
     events = build_events(settings, health)
     identity, policy = _build_security(settings, health)
-    n2sql = build_n2sql(settings, llm, audit=audit, health=health)
-
     skills_registry = build_skill_registry(settings)
     _report_health(
         health,
@@ -640,6 +707,7 @@ def build_container(settings: Settings | None = None, ingest: bool = True) -> Co
         f"{len(skills_registry.all())} skills",
         owner="skills",
     )
+    n2sql = build_n2sql(settings, llm, audit=audit, health=health, skills=skills_registry)
 
     return Container(
         settings=settings,
