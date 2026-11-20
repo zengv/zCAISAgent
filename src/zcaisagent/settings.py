@@ -194,6 +194,13 @@ class CacheConfig:
 
 
 @dataclass(frozen=True)
+class ConversationConfig:
+    """多轮对话配置；默认开启 LLM 兜底查询改写。"""
+
+    llm_rewrite_enabled: bool = True
+
+
+@dataclass(frozen=True)
 class SchedulerConfig:
     """定时任务配置；默认关闭。"""
 
@@ -440,6 +447,7 @@ class Settings:
     tools: ToolsConfig | None = None
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     cache: CacheConfig | None = None
+    conversation: ConversationConfig = field(default_factory=ConversationConfig)
     scheduler: SchedulerConfig | None = None
     events: EventsConfig | None = None
     secret: SecretConfig | None = None
@@ -687,6 +695,12 @@ class Settings:
                     )
                 ),
             )
+
+        # [conversation]：多轮追问的 LLM 兜底改写开关，默认开启。
+        raw_conversation = cfg.get("conversation", {}) or {}
+        conversation = ConversationConfig(
+            llm_rewrite_enabled=bool(raw_conversation.get("llm_rewrite_enabled", True))
+        )
 
         raw_scheduler = cfg.get("scheduler")
         scheduler: SchedulerConfig | None = None
@@ -976,6 +990,7 @@ class Settings:
             tools=tools,
             memory=memory,
             cache=cache,
+            conversation=conversation,
             scheduler=scheduler,
             events=events,
             secret=secret,

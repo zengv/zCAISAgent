@@ -57,6 +57,8 @@ class PageIndexRetriever:
 
     source_name = "pageindex"
     source_type = SourceType.DOCUMENT
+    # 章节导航回读的仍是制度库原文，属一手来源。
+    authority = "primary"
 
     def __init__(self) -> None:
         self.chunks: list[Chunk] = []
@@ -170,7 +172,7 @@ class PageIndexRetriever:
                     snippet=section.content[:160],
                     score=round(score, 4),
                     relevance=round(score, 4),
-                    authority="secondary",
+                    authority=self.authority,
                     version=chunk.version or parsed,
                     metadata={
                         "doc_id": chunk.doc_id,

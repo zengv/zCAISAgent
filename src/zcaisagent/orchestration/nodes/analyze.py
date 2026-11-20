@@ -2,7 +2,12 @@ import json
 import re
 import time
 
+from zcaisagent.capabilities.conversation.clarify import detect_clarify
 from zcaisagent.capabilities.conversation.context import resolve_followup
+from zcaisagent.capabilities.conversation.rewrite import (
+    rewrite_query_with_llm,
+    rewrite_request,
+)
 from zcaisagent.domain.enums import AutonomyLevel, MemoryKind
 from zcaisagent.domain.models import Message, RunState
 from zcaisagent.domain.patch import StatePatch
@@ -201,16 +206,30 @@ def _valid_model_analysis(payload: dict) -> dict | None:
         confidence = float(payload.get("confidence", 0.0))
     except (TypeError, ValueError):
         return None
-    return {
+    result = {
         "intent": intent,
         "complexity": complexity,
         "freshness": freshness,
         "needs_tool": bool(payload.get("needs_tool", False)),
-        "needs_clarify": False,
+        "needs_clarify": bool(payload.get("needs_clarify", False)),
         "language": payload.get("language") if payload.get("language") in {"zh", "en"} else "zh",
         "confidence": max(0.0, min(1.0, confidence)),
         "basis": "model",
     }
+    # 澄清提示原样透传，非法类型直接丢弃，不影响既有路由。
+    question = payload.get("clarify_question")
+    if isinstance(question, str) and question.strip():
+        result["clarify_question"] = question.strip()
+    raw_options = payload.get("clarify_options")
+    if isinstance(raw_options, list):
+        options = [
+            item.strip()
+            for item in raw_options
+            if isinstance(item, str) and item.strip()
+        ]
+        if options:
+            result["clarify_options"] = options
+    return result
 
 
 async def _model_analysis(
@@ -294,6 +313,58 @@ async def analyze_node(state: RunState, ctx: RunContext) -> StatePatch:
         f"analyzed:{analysis['intent']}/{analysis['complexity']}",
         f"route_basis:{analysis['basis']}",
     ]
+    # 模糊问题澄清：存在多个历史候选且本轮指代不清时才追问，宁可不问。
+    if analysis["intent"] not in {"闲聊", "不安全"}:
+        hint = analysis if analysis.get("basis") == "model" else None
+        clarify = detect_clarify(state.goal, state.messages, model_hint=hint)
+        if clarify is not None:
+            analysis["clarify"] = clarify
+            notes.append(f"clarify:detected:{clarify['reason']}")
+    # 规则补全命中且无需澄清时，再用 LLM 兜底改写为独立查询；失败回退规则结果。
+    conversation_config = getattr(getattr(ctx, "config", None), "conversation", None)
+    if (
+        analysis.get("followup_query")
+        and not analysis.get("clarify")
+        and ctx.llm is not None
+        and getattr(conversation_config, "llm_rewrite_enabled", True)
+    ):
+        rewrite_req = rewrite_request(
+            state.goal, state.messages, timeout_s=ctx.node_timeout_s
+        )
+        started = time.perf_counter()
+        rewrite_resp = await rewrite_query_with_llm(
+            ctx.llm, state.goal, state.messages, timeout_s=ctx.node_timeout_s
+        )
+        if rewrite_resp is not None:
+            analysis["rewrite_query"] = rewrite_resp.text.strip()
+            notes.append("rewrite:llm")
+            await emit(
+                ctx,
+                state,
+                "llm.called",
+                node="analyze",
+                data=llm_call_record(rewrite_req, rewrite_resp, started),
+            )
+            # 基于已有预算累加，避免覆盖模型分析兜底消耗。
+            base_budget = patch.budget or state.budget
+            patch.budget = base_budget.model_copy(
+                update={
+                    "used_llm_calls": base_budget.used_llm_calls + 1,
+                    "used_tokens": (
+                        base_budget.used_tokens
+                        + rewrite_resp.tokens_in
+                        + rewrite_resp.tokens_out
+                    ),
+                    "used_tokens_in": base_budget.used_tokens_in + rewrite_resp.tokens_in,
+                    "used_tokens_out": base_budget.used_tokens_out + rewrite_resp.tokens_out,
+                    "used_cached_tokens": (
+                        base_budget.used_cached_tokens + rewrite_resp.cached_tokens
+                    ),
+                    "used_cost_usd": base_budget.used_cost_usd + rewrite_resp.cost_usd,
+                }
+            )
+        else:
+            notes.append("rewrite:rule")
     if (
         getattr(ctx, "n2sql", None) is not None
         and analysis["intent"] != "不安全"

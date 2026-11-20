@@ -35,6 +35,8 @@ def current_versions(chunks: list[Chunk]) -> list[Chunk]:
 class InMemoryRetriever:
     source_name = "inmemory"
     source_type = SourceType.DOCUMENT
+    # 种子制度库原文属于一手来源；权威等级按来源身份而非检索方式划分。
+    authority = "primary"
 
     def __init__(self) -> None:
         self.chunks: list[Chunk] = []
@@ -75,7 +77,7 @@ class InMemoryRetriever:
                 snippet=chunk.content[:160],
                 score=round(score, 4),
                 relevance=round(score, 4),
-                authority="secondary",
+                authority=self.authority,
                 version=_family_and_version(chunk)[1],
                 metadata={"doc_id": chunk.doc_id, "index": chunk.index},
                 parent_content=chunk.parent_content,

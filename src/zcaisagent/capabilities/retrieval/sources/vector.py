@@ -27,6 +27,8 @@ class VectorRetriever:
 
     source_name = "vector"
     source_type = SourceType.DOCUMENT
+    # 向量路检索的仍是种子制度库原文，属一手来源。
+    authority = "primary"
 
     def __init__(self, embedder: EmbeddingPort) -> None:
         self.embedder = embedder
@@ -121,7 +123,7 @@ class VectorRetriever:
                     snippet=chunk.content[:160],
                     score=round(score, 4),
                     relevance=round(score, 4),
-                    authority="secondary",
+                    authority=self.authority,
                     version=chunk.version or parsed,
                     metadata={"doc_id": chunk.doc_id, "index": chunk.index},
                     parent_content=chunk.parent_content,

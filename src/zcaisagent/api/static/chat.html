@@ -488,6 +488,75 @@
     margin-bottom: 4px;
   }
 
+  /* 澄清追问卡片 */
+  .clarify-card {
+    margin-top: 14px;
+    max-width: 560px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-left: 2px solid var(--gold);
+    border-radius: 4px;
+    padding: 12px 14px;
+  }
+
+  .clarify-card h4 {
+    margin: 0 0 10px;
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--gold);
+  }
+
+  .clarify-q {
+    font-size: 13px;
+    line-height: 1.7;
+    color: var(--ink);
+    margin-bottom: 8px;
+  }
+
+  .clarify-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+
+  .clarify-options button {
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    color: var(--ink);
+    font-size: 12.5px;
+    padding: 7px 12px;
+    text-align: left;
+  }
+
+  .clarify-options button:hover:not(:disabled) {
+    border-color: var(--gold);
+    background: var(--gold-soft);
+    color: var(--gold);
+  }
+
+  .clarify-options button:active:not(:disabled) { transform: translateY(1px); }
+
+  .clarify-options button.active {
+    border-color: var(--gold);
+    background: var(--gold-soft);
+    color: var(--gold);
+  }
+
+  .clarify-options button:disabled:not(.active) {
+    color: var(--muted);
+    opacity: .6;
+    cursor: not-allowed;
+  }
+
+  .clarify-hint {
+    font-size: 11px;
+    color: var(--muted);
+  }
+
   /* 执行步骤（默认折叠） */
   .steps {
     margin-top: 14px;
@@ -908,8 +977,12 @@
   const cmdMenu = $('cmdMenu');
   const cmdList = $('cmdList');
 
-  let threadId = newThreadId();
+  const THREAD_KEY = 'zcais.thread';
+  let threadId = localStorage.getItem(THREAD_KEY) || newThreadId();
+  localStorage.setItem(THREAD_KEY, threadId);
   let busy = false;
+  let turn = 0;
+  let awaitingClarify = false;
 
   const COMMANDS = [
     { name: '问数', desc: '自然语言查询数据库，支持图表与 Excel 导出' },
@@ -929,13 +1002,7 @@
 
   $('newThread').addEventListener('click', () => {
     if (busy) return;
-    threadId = newThreadId();
-    $('mThread').textContent = threadId;
-    $('mRun').textContent = '—';
-    $('mRun').dataset.value = '';
-    setStage('idle');
-    document.querySelectorAll('.msg').forEach((n) => n.remove());
-    $('empty').hidden = false;
+    startFreshThread();
     input.focus();
   });
 
@@ -1061,6 +1128,96 @@
 
   function newThreadId() {
     return (crypto.randomUUID && crypto.randomUUID()) || 'thread_' + Date.now().toString(36);
+  }
+
+  // ── 刷新恢复：只存 thread_id，历史从后端聚合接口回放 ──
+
+  function renderHistory(messages) {
+    if (!messages.length) return;
+    $('empty').hidden = true;
+    messages.forEach((msg, index) => {
+      appendUser(msg.goal);
+      const bubble = appendAgent();
+      bubble.thinking.remove();
+
+      const answer = (msg.answer || '').trim();
+      bubble.body.textContent = answer || (msg.clarify ? '（请补充信息）' : '（无内容）');
+      bubble.meta.appendChild(simpleText('span', 'badge', `第 ${index + 1} 轮`));
+
+      if (msg.abstained) {
+        bubble.meta.appendChild(simpleText('span', 'badge warn', '已拒答'));
+      } else {
+        const confidence = (msg.confidence || 'low').toLowerCase();
+        const level = confidence === 'high' ? 'high' : confidence === 'medium' ? '' : 'low';
+        bubble.meta.appendChild(
+          simpleText('span', `badge ${level}`.trim(), '置信度 · ' + confidence)
+        );
+      }
+
+      const cites = msg.citations || [];
+      bubble.meta.appendChild(simpleText('span', 'badge', `引用 · ${cites.length}`));
+      cites.forEach((c) => {
+        const card = document.createElement('div');
+        card.className = 'citation';
+        card.appendChild(simpleText('b', 'cite-id', c.evidence_id || 'unknown'));
+        card.appendChild(document.createTextNode((c.quote || '（无引文）').trim()));
+        bubble.citations.appendChild(card);
+      });
+
+      if (msg.clarify && msg.clarify.questions && msg.clarify.questions.length) {
+        awaitingClarify = true;
+        renderClarify(bubble.wrap, msg.clarify, bubble);
+      }
+    });
+    turn = messages.length;
+    if (awaitingClarify) {
+      setStage('person/answer');
+      hintLine.textContent = '请补充信息';
+    }
+    scrollToBottom(true);
+  }
+
+  function startFreshThread() {
+    threadId = newThreadId();
+    localStorage.setItem(THREAD_KEY, threadId);
+    turn = 0;
+    awaitingClarify = false;
+    $('mThread').textContent = threadId;
+    $('mRun').textContent = '—';
+    $('mRun').dataset.value = '';
+    setStage('idle');
+    document.querySelectorAll('.msg').forEach((n) => n.remove());
+    $('empty').hidden = false;
+  }
+
+  async function restoreHistory() {
+    $('mThread').textContent = threadId;
+    const apiKey = $('apiKey').value.trim();
+    if (!apiKey) return;
+
+    const query = new URLSearchParams({
+      tenant_id: $('tenant').value.trim() || 'demo',
+      user_id: $('userId').value.trim() || 'web',
+      limit: '20',
+    });
+    let payload;
+    try {
+      const res = await fetch(
+        `/v1/threads/${encodeURIComponent(threadId)}/messages?${query.toString()}`,
+        { headers: { 'X-API-Key': apiKey } }
+      );
+      if (!res.ok) {
+        // 归属变更或会话不可访问：不暴露细节，直接开新会话。
+        if (res.status === 403) showError('该会话不可访问，已开始新会话');
+        startFreshThread();
+        return;
+      }
+      payload = await res.json();
+    } catch {
+      // 后端暂不可用时不打断用户，保持空白新会话。
+      return;
+    }
+    renderHistory(payload.messages || []);
   }
 
   let toastTimer = null;
@@ -1203,6 +1360,39 @@
     wrap.appendChild(steps);
 
     return { wrap, body, meta, citations, steps, thinking };
+  }
+
+  function renderClarify(host, clarify, bubble) {
+    const card = document.createElement('div');
+    card.className = 'clarify-card';
+    card.appendChild(simpleText('h4', '', '需要确认一下'));
+
+    const questions = clarify.questions || [];
+    questions.forEach((item) => {
+      if (!item) return;
+      if (item.question) card.appendChild(simpleText('div', 'clarify-q', item.question));
+      const options = document.createElement('div');
+      options.className = 'clarify-options';
+      (item.options || []).forEach((option) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = option;
+        button.addEventListener('click', () => {
+          if (busy) return;
+          input.value = option;
+          autosize();
+          card.querySelectorAll('button').forEach((node) => { node.disabled = true; });
+          button.classList.add('active');
+          $('composer').requestSubmit();
+        });
+        options.appendChild(button);
+      });
+      card.appendChild(options);
+    });
+
+    card.appendChild(simpleText('div', 'clarify-hint', '也可以直接在输入框补充说明'));
+    host.insertBefore(card, bubble.citations);
+    return card;
   }
 
   function scrollToBottom(force = false) {
@@ -1352,6 +1542,12 @@
     setStage('running', true);
     hintLine.textContent = '生成中…';
 
+    turn += 1;
+    awaitingClarify = false;
+    document.querySelectorAll('.clarify-card button').forEach((node) => {
+      node.disabled = true;
+    });
+
     $('empty').hidden = true;
     input.value = '';
     autosize();
@@ -1423,8 +1619,8 @@
     } finally {
       busy = false;
       sendBtn.disabled = false;
-      setStage('idle');
-      hintLine.textContent = charCount ? `已完成 · ${charCount} 字` : '等待输入';
+      if (!awaitingClarify) setStage('idle');
+      if (!awaitingClarify) hintLine.textContent = charCount ? `已完成 · ${charCount} 字` : '等待输入';
       setTimeout(() => scrollToBottom(true), 40);
       input.focus();
     }
@@ -1439,6 +1635,8 @@
         bubble.body.textContent = finalText;
       }
       if (!text) bubble.body.textContent = '（无内容）';
+
+      bubble.meta.appendChild(simpleText('span', 'badge', `第 ${turn} 轮`));
 
       const confidence = (data.confidence || 'low').toLowerCase();
       const level = confidence === 'high' ? 'high' : confidence === 'medium' ? '' : 'low';
@@ -1456,6 +1654,15 @@
         bubble.meta.appendChild(simpleText('span', 'badge', `tokens · ${m.tokens_total}/${m.token_budget}（${pct}%）`));
         bubble.meta.appendChild(simpleText('span', 'badge', `in ${m.tokens_in} · out ${m.tokens_out}`));
         bubble.meta.appendChild(simpleText('span', 'badge', `缓存命中 · ${hit}%`));
+      }
+
+      awaitingClarify = Boolean(
+        data.clarify && data.clarify.questions && data.clarify.questions.length
+      );
+      if (awaitingClarify) {
+        setStage('person/answer');
+        hintLine.textContent = '请补充信息';
+        renderClarify(bubble.wrap, data.clarify, bubble);
       }
 
       cites.forEach((c) => {
@@ -2093,6 +2300,7 @@
   $('mThread').textContent = threadId;
   autosize();
   input.focus();
+  restoreHistory();
 })();
 </script>
 </body>

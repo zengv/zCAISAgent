@@ -1,4 +1,80 @@
+import asyncio
+
+from zcaisagent.capabilities.conversation.rewrite import (
+    rewrite_query_with_llm,
+    rewrite_request,
+)
 from zcaisagent.capabilities.retrieval.rewrite import rewrite_queries
+from zcaisagent.domain.models import Message
+from zcaisagent.ports.llm import LLMRequest, LLMResponse
+
+
+class _StubLLM:
+    """按预设文本或异常响应的最小 LLM 桩，记录收到的请求。"""
+
+    def __init__(self, text: str = "", error: Exception | None = None) -> None:
+        self.text = text
+        self.error = error
+        self.requests: list[LLMRequest] = []
+
+    async def complete(self, req: LLMRequest) -> LLMResponse:
+        self.requests.append(req)
+        if self.error is not None:
+            raise self.error
+        return LLMResponse(text=self.text, tokens_in=8, tokens_out=4)
+
+
+def _messages(*contents: str) -> list[Message]:
+    return [Message(role="user", content=content) for content in contents]
+
+
+def test_rewrite_request_carries_history_and_latest_question() -> None:
+    messages = _messages("年假天数是多少？", "那病假呢？", "这个呢？")
+    request = rewrite_request("这个呢？", messages)
+    assert request.purpose == "rewrite"
+    user_content = request.messages[-1].content
+    assert "年假天数是多少？" in user_content
+    assert "那病假呢？" in user_content
+    assert user_content.endswith("最新问题：这个呢？")
+
+
+def test_rewrite_query_returns_clean_text() -> None:
+    llm = _StubLLM('"年假和病假天数分别是多少？"')
+    response = asyncio.run(
+        rewrite_query_with_llm(llm, "这个呢？", _messages("年假天数是多少？", "这个呢？"))
+    )
+    assert response is not None
+    assert response.text == "年假和病假天数分别是多少？"
+
+
+def test_rewrite_query_returns_none_on_error() -> None:
+    llm = _StubLLM(error=RuntimeError("timeout"))
+    assert (
+        asyncio.run(
+            rewrite_query_with_llm(llm, "这个呢？", _messages("年假是多少？", "这个呢？"))
+        )
+        is None
+    )
+
+
+def test_rewrite_query_returns_none_on_empty_text() -> None:
+    llm = _StubLLM("   ")
+    assert (
+        asyncio.run(
+            rewrite_query_with_llm(llm, "这个呢？", _messages("年假是多少？", "这个呢？"))
+        )
+        is None
+    )
+
+
+def test_rewrite_query_returns_none_on_overlong_text() -> None:
+    llm = _StubLLM("年" * 201)
+    assert (
+        asyncio.run(
+            rewrite_query_with_llm(llm, "这个呢？", _messages("年假是多少？", "这个呢？"))
+        )
+        is None
+    )
 
 
 def test_short_simple_query_keeps_only_original() -> None:

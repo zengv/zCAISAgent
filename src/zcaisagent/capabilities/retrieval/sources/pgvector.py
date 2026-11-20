@@ -13,6 +13,8 @@ class PgVectorRetriever:
 
     source_name = "pgvector"
     source_type = SourceType.DOCUMENT
+    # 持久化的仍是种子制度库原文，属一手来源。
+    authority = "primary"
 
     def __init__(self, store: VectorStorePort, embedder: EmbeddingPort) -> None:
         self.store = store
@@ -44,7 +46,7 @@ class PgVectorRetriever:
                 snippet=chunk.content[:160],
                 score=round(score, 4),
                 relevance=round(score, 4),
-                authority="secondary",
+                authority=self.authority,
                 version=chunk.version,
                 metadata={"doc_id": chunk.doc_id, "index": chunk.index},
                 parent_content=chunk.parent_content,

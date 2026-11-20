@@ -8,6 +8,7 @@ from zcaisagent.orchestration.graph import Edge, GraphSpec
 from zcaisagent.orchestration.nodes.abstain import abstain_node
 from zcaisagent.orchestration.nodes.act import act_node
 from zcaisagent.orchestration.nodes.analyze import analyze_node
+from zcaisagent.orchestration.nodes.clarify import clarify_node
 from zcaisagent.orchestration.nodes.direct_answer import direct_answer_node
 from zcaisagent.orchestration.nodes.grade import grade_node
 from zcaisagent.orchestration.nodes.n2sql import n2sql_node
@@ -25,6 +26,7 @@ from zcaisagent.orchestration.nodes.verify import verify_node
 def build_default_graph() -> GraphSpec:
     nodes: dict[str, Callable[[RunState, Any], Awaitable[StatePatch]]] = {
         "analyze": analyze_node,
+        "clarify": clarify_node,
         "route": route_node,
         "plan": plan_node,
         "act": act_node,
@@ -41,6 +43,8 @@ def build_default_graph() -> GraphSpec:
         "abstain": abstain_node,
     }
     edges = [
+        # 模糊问题先追问澄清；clarify 节点把 status 置 AWAITING_USER 后运行循环退出。
+        Edge("analyze", "clarify", lambda s: bool(s.analysis.get("clarify"))),
         Edge("analyze", "route"),
         Edge("route", "abstain", lambda s: s.analysis.get("intent") == "不安全"),
         Edge("route", "direct_answer", lambda s: s.level == AutonomyLevel.L0_DIRECT),

@@ -42,8 +42,12 @@ async def retrieve_node(state: RunState, ctx: RunContext) -> StatePatch:
     if retry_query:
         variants = [{"strategy": "retry", "query": retry_query}]
     else:
-        # 多轮追问先用上下文补全的 query 检索，原始 goal 保留在 state.goal。
-        base = state.analysis.get("followup_query") or state.goal
+        # 多轮追问优先用 LLM 改写 query，其次用上下文补全的 query，原始 goal 保留在 state.goal。
+        base = (
+            state.analysis.get("rewrite_query")
+            or state.analysis.get("followup_query")
+            or state.goal
+        )
         variants = rewrite_queries(
             base,
             state.analysis.get("complexity", "simple"),
@@ -188,7 +192,12 @@ async def retrieve_node(state: RunState, ctx: RunContext) -> StatePatch:
     reranker = getattr(ctx, "reranker", None)
     rerank_scores: dict[str, float] | None = None
     if reranker is not None and fused:
-        rerank_query = retry_query or state.analysis.get("followup_query") or state.goal
+        rerank_query = (
+            retry_query
+            or state.analysis.get("rewrite_query")
+            or state.analysis.get("followup_query")
+            or state.goal
+        )
         try:
             scores = await reranker.rerank(rerank_query, [item.content for item in fused])
             rerank_scores = {

@@ -356,7 +356,7 @@ stateDiagram-v2
   2. 上下文按预算压缩：先压缩中间结论，再裁剪低分证据；始终保留最近一轮用户输入；
   3. 用户显式切换话题时，不继承上一话题的证据。
 - **可观察结果**：多轮追问准确率 ≥ 80%（MVP）。**测量口径**：基于多轮专项标注集（≥ 50 组含指代/省略的追问，独立于黄金集），judge 评分 + 每周人工抽检 ≥ 10 组复核。
-- **现状差异**：M1 已实现（`capabilities/conversation/context.py` + `api/service.py`）：同 `thread_id` 复用会话时装载最近 Run 的用户消息与已成功答案，按最近 6 条消息截断；短问句/含指代/省略词（呢、还有、上述等）生成 `analysis["followup_query"]` 供检索与计划使用，`state.goal` 始终保留原文；显式切换话题词（换个话题/新问题等）不继承上下文。缺口：① 未做中间结论压缩与低分证据裁剪（只做消息窗口截断）；② 指代消解为规则匹配，未接模型；③ 多轮准确率未用专项集测量；④ 证据本身按 Run 隔离，尚无跨 Run 继承路径。
+- **现状差异**：M1 已实现（`capabilities/conversation/context.py` + `api/service.py`）：同 `thread_id` 复用会话时装载最近 Run 的用户消息与已成功答案，按最近 6 条消息截断；短问句/含指代/省略词（呢、还有、上述等）触发补全，`resolve_followup` 拼接最近两条历史用户消息与本轮生成 `analysis["followup_query"]`，`state.goal` 始终保留原文；显式切换话题词（换个话题/新问题等）不继承上下文。`analyze` 在补全后调用 LLM 把追问改写为独立检索 query（成功写 `analysis["rewrite_query"]` 与 `rewrite:llm`，失败回退规则记 `rewrite:rule`，开关 `[conversation] llm_rewrite_enabled` 默认开启）；检索侧按 `retry_query > rewrite_query > followup_query > goal` 取 query，原 query 恒保留为第一路。模糊追问触发澄清时，追问文案与选项作为助手消息进入会话历史，用户选项或自由输入以同一 `thread_id` 续问。缺口：① 未做中间结论压缩与低分证据裁剪（只做消息窗口截断）；② 多轮准确率未用专项集测量；③ 证据本身按 Run 隔离，尚无跨 Run 继承路径。
 
 #### FR-CHAT-04 任务模式切换 `P0` `[已交付]`
 
@@ -366,7 +366,7 @@ stateDiagram-v2
   - 用户强制升级时，系统不得拒绝执行，但预算仍受租户上限约束。
 - **现状差异（已补齐）**：M1 已实现"用户选择优先"（`container.create_state` 保留 `requested_level`，`analyze` 以 `basis="user"` 覆盖规则判定），并有单测覆盖；非法等级字符串按 L1 兜底（需求未定义该输入的对外错误，暂不拦截）。
 
-#### FR-CHAT-05 澄清 `P1` `[待开发]`
+#### FR-CHAT-05 澄清 `P1` `[待收敛]`
 
 - **触发**：目标存在歧义、缺少关键参数、或权限需要用户确认。
 - **规则**：
@@ -375,10 +375,12 @@ stateDiagram-v2
   3. 用户不回答时不得猜测关键参数（如金额、对象、时间范围）；
   4. 澄清导致状态 `awaiting_user`，恢复后继续同一 Run。
 - **异常**：无权限时说明"无权限"，不提示"该文档存在但你不能看"。
+- **现状差异**：规则澄清闭环已实现。`capabilities/conversation/clarify.py` 的纯规则函数 `detect_clarify` 仅在最近一条历史用户消息可拆出 ≥2 个候选主体（按「和/及/与/、/；/以及/分别」切分）、且本轮问句过短（≤8 字）、含单数指代词（它/这个/那个/该/其/上面/刚才/上述）或缺少主体时触发；已点明候选主体、显式换话题、寒暄、无历史时不触发。`orchestration/nodes/clarify.py` 不调模型、不检索、不计动作，写入追问文案并把 Run 置为 `AWAITING_USER`；`build.py` 新增 `analyze → clarify` 条件边（先于 `analyze → route`），clarify 无出边，Run 停在 `AWAITING_USER`。`api/schemas.py` 新增 `ClarifyOut`/`ClarifyQuestion` 与 `build_clarify`（`AWAITING_USER` 且清洗出有效题目时才非空），SSE `done` 事件新增 `clarify` 与 `stage` 字段；前端 `api/static/chat.html` 渲染「需要确认一下」选项卡片，点选或自由输入均以同一 `thread_id` 续问，提交后禁用按钮。一次最多 2 问、每题 2-4 个选项 + 自由输入。模型兜底仅在 `basis=model`、`needs_clarify=true` 且给出 2-4 个选项时采纳。未做：① 模型生成澄清选项的全量开放（当前仅低置信度兜底）；② 交互式多轮澄清的专项评测；③ 澄清频次与误触发率指标。
 
 #### FR-CHAT-06 会话历史与分享 `P1` `[待开发]`
 
 - 用户只能查看自己有权访问的会话；分享链接必须携带有效期（默认 7 天，租户可配置 1-30 天）与访问校验，到期自动失效；脱敏后的轨迹可导出。
+- **现状差异**：已实现本人会话历史回放的最小闭环——前端只在 `localStorage` 保存 `thread_id`，刷新后调用 `GET /v1/threads/{thread_id}/messages` 回放最近轮次（默认 20 条，支持 `limit`/`before` 向前翻页），按 `tenant_id + user_id` 校验归属，越权统一 403，不存在的会话返回空列表。未做：分享链接与有效期、脱敏轨迹导出、历史分页 UI 与跨设备同步。
 
 ---
 
@@ -387,13 +389,13 @@ stateDiagram-v2
 #### FR-ROUTE-01 意图与复杂度分析 `P0` `[待收敛]`
 
 - **输入**：目标原文 + 最近会话上下文（如有）。
-- **必须产出的判定**：意图类型（闲聊/查事实/对比/操作指引/分析/不安全）、复杂度（简单/多跳/开放）、时效要求（无/近期/实时）、是否需要工具、是否需要澄清、语言。
+- **必须产出的判定**：意图类型（闲聊/查事实/对比/操作指引/分析/不安全）、复杂度（简单/多跳/开放）、时效要求（无/近期/实时）、是否需要工具、是否需要澄清（`needs_clarify`）、语言。
 - **语言字段用途**：用于检索源语言路由与答案语言跟随提问；MVP 仅支持中文，该字段为多语言预留（全量多语言支持不在本文范围）。
 - **规则优先级**：
   1. 规则优先：编号、代码、精确标题、短问句 → 不改写；
   2. 模型兜底：结构化输出 + 置信度；置信度低于阈值时向低等级收敛；
   3. 用户显式选择覆盖以上判定。
-- **现状差异**：M1 已实现多信号规则判定（意图/复杂度/时效/工具/语言/置信度）+ 低置信度模型兜底 + 规则失败默认 L1；用户显式等级优先。2026-11-08 已建成 50 条路由分级专项集（`data/eval/grading.jsonl`，L1 20 / L2 20 / L3 10），`zcaisagent grade` 实测 49/50 = 98%（目标 ≥85% 达标），L1/L2/L3 recall 为 1.0 / 0.95 / 1.0，`basis` 全部为 `rule`（未触发模型兜底）。唯一失败 `g037`（"新员工设备由主管申请，离职设备归还是否也由主管审批？"应为 L2、判为 L1，原因：并列问句未触发多跳标记）。双人独立标注与仲裁流程仍未执行，登记待办。2026-11-12：配置 `[n2sql]` 时，`analyze` 额外判定数据查询意图；命中后 `route` 优先进入 `n2sql`，不进入知识检索。
+- **现状差异**：M1 已实现多信号规则判定（意图/复杂度/时效/工具/语言/置信度）+ 低置信度模型兜底 + 规则失败默认 L1；用户显式等级优先。2026-11-08 已建成 50 条路由分级专项集（`data/eval/grading.jsonl`，L1 20 / L2 20 / L3 10），`zcaisagent grade` 实测 49/50 = 98%（目标 ≥85% 达标），L1/L2/L3 recall 为 1.0 / 0.95 / 1.0，`basis` 全部为 `rule`（未触发模型兜底）。唯一失败 `g037`（"新员工设备由主管申请，离职设备归还是否也由主管审批？"应为 L2、判为 L1，原因：并列问句未触发多跳标记）。双人独立标注与仲裁流程仍未执行，登记待办。2026-11-12：配置 `[n2sql]` 时，`analyze` 额外判定数据查询意图；命中后 `route` 优先进入 `n2sql`，不进入知识检索。2026-11-19：`analyze` 已产出 `needs_clarify`（模型结构化字段）；是否需要追问以规则 `detect_clarify` 优先，模型结果仅在低置信度兜底且同时给出 2-4 个选项时采纳，选项不足不采纳。
 - **可观察结果**：分级准确率 ≥ 85%。**测量口径**：基于路由分级专项标注集（≥ 50 条，独立于黄金集 100 条，覆盖各等级与意图类型，标注期望等级），比对实际判定等级；分歧样本人工复核。
 
 #### FR-ROUTE-02 等级选择 `P0` `[待收敛]`
@@ -504,7 +506,7 @@ stateDiagram-v2
 
 **硬规则**：原始查询永远至少参与一路检索，改写结果不得替代它。
 
-- **现状差异**：M1 已实现确定性改写分级（`capabilities/retrieval/rewrite.py`）：`simple` 短问句/不安全意图只走 `none`，其余走 `none + light`；`multi_hop` 按连接词拆 `multi_1..3`；`open` 按标点拆 `decompose_1..3`；原 query 恒为首路。HyDE 已实现（`hyde_variant`：仅 `open` 复杂度、默认关闭、失败/超时跳过并计入预算）；"含指代"的上下文消解依赖 FR-CHAT-03；改写质量未用专项集测量。
+- **现状差异**：M1 已实现确定性改写分级（`capabilities/retrieval/rewrite.py`）：`simple` 短问句/不安全意图只走 `none`，其余走 `none + light`；`multi_hop` 按连接词拆 `multi_1..3`；`open` 按标点拆 `decompose_1..3`；原 query 恒为首路。HyDE 已实现（`hyde_variant`：仅 `open` 复杂度、默认关闭、失败/超时跳过并计入预算）。多轮场景新增 LLM 兜底改写（`capabilities/conversation/rewrite.py` 的 `rewrite_query_with_llm`，`purpose="rewrite"`，只输出一条独立检索 query，异常/超时/空串/>200 字返回 None）：`analyze` 在澄清未触发且存在 `followup_query` 时调用，成功写 `analysis["rewrite_query"]` 并记 `rewrite:llm`，失败回退规则记 `rewrite:rule`；检索与 rerank 的 query 优先级为 `retry_query > rewrite_query > followup_query > goal`，原 query 恒为第一路改写变体（`rewrite_queries` 的 `none` 首路不变）。开关 `[conversation] llm_rewrite_enabled` 默认开启，关闭时只走规则补全。改写质量未用专项集测量。
 
 #### FR-RET-04 混合检索与融合 `P0` `[待收敛]`
 

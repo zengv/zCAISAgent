@@ -24,9 +24,10 @@ def is_topic_switch(goal: str) -> bool:
 
 
 def resolve_followup(goal: str, messages: list[Message]) -> str | None:
-    """基于最近一轮用户输入补全指代/省略，返回检索用 query。
+    """基于最近两轮用户输入补全指代/省略，返回检索用 query。
 
     原始 goal 不改写；仅在短问句或含指代词时启用补全，显式切换话题时不继承上下文。
+    拼接最近两条历史用户消息，保留连续追问的上下文链条。
     """
     text = goal.strip()
     if not text or is_topic_switch(text):
@@ -41,5 +42,5 @@ def resolve_followup(goal: str, messages: list[Message]) -> str | None:
     if len(text) <= _SHORT_GOAL or any(
         marker in text for marker in (*_PRONOUN_MARKERS, *_ELLIPSIS_MARKERS)
     ):
-        return f"{previous[-1]} {text}"
+        return " ".join([*previous[-2:], text])
     return None

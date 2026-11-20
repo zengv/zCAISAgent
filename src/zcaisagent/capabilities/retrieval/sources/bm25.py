@@ -41,6 +41,8 @@ class SqliteBm25Retriever:
 
     source_name = "bm25"
     source_type = SourceType.DOCUMENT
+    # 与 inmemory 同源：都是种子制度库原文，属一手来源。
+    authority = "primary"
 
     def __init__(self) -> None:
         self.chunks: list[Chunk] = []
@@ -136,7 +138,7 @@ class SqliteBm25Retriever:
                         snippet=row[3][:160],
                         score=score,
                         relevance=score,
-                        authority="secondary",
+                        authority=self.authority,
                         version=row[6] or parsed,
                         metadata={"doc_id": row[1], "index": int(row[5])},
                         parent_content=row[7] or None,

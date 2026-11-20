@@ -29,3 +29,11 @@ def test_topic_switch_does_not_inherit_context() -> None:
 
 def test_first_turn_has_no_context_to_resolve() -> None:
     assert resolve_followup("它呢？", _messages("它呢？")) is None
+
+
+def test_followup_concatenates_recent_two_user_messages() -> None:
+    messages = _messages("年假天数是多少？", "那病假呢？", "这个呢？")
+    assert (
+        resolve_followup("这个呢？", messages)
+        == "年假天数是多少？ 那病假呢？ 这个呢？"
+    )

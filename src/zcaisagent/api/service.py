@@ -3,8 +3,11 @@ from zcaisagent.api.schemas import (
     CitationOut,
     RunRequest,
     RunResponse,
+    ThreadHistoryOut,
     build_approval,
+    build_clarify,
     build_metrics,
+    build_thread_message,
 )
 from zcaisagent.capabilities.memory.distill import distill_and_write
 from zcaisagent.capabilities.memory.policies import write_explicit_memory
@@ -45,6 +48,7 @@ def to_response(state: RunState) -> RunResponse:
         limitations=answer.limitations if answer else [],
         metrics=build_metrics(state),
         approval=build_approval(state),
+        clarify=build_clarify(state),
     )
 
 
@@ -76,6 +80,55 @@ async def _thread_history(
     if latest.answer is not None and not latest.answer.abstained:
         history.append(Message(role="assistant", content=latest.answer.text))
     return history[-_HISTORY_WINDOW:]
+
+
+async def thread_history(
+    auth: AuthContext,
+    thread_id: str,
+    limit: int = 20,
+    before: float | None = None,
+) -> ThreadHistoryOut:
+    """回放会话历史：只返回当前身份拥有的轮次，按时间升序。
+
+    `before` 为向前翻页的时间游标；`has_more` 表示窗口之外仍有更早轮次。
+    """
+    container = get_container()
+    runs = await container.checkpoint.list_thread(thread_id)
+    if not runs:
+        return ThreadHistoryOut(thread_id=thread_id)
+
+    # 会话归属校验：只要存在不属于当前身份的轮次，统一拒绝且不泄漏细节。
+    if any(
+        state.tenant_id != auth.tenant_id or state.user_id != auth.user_id
+        for state in runs
+    ):
+        latest = max(runs, key=lambda state: (state.created_ts, state.run_id))
+        await container.audit.append(
+            AuditEvent(
+                action="thread.cross_tenant_denied",
+                actor=auth.user_id,
+                tenant_id=auth.tenant_id,
+                run_id=latest.run_id,
+                detail={
+                    "thread_id": thread_id,
+                    "owner_tenant": latest.tenant_id,
+                    "owner_user": latest.user_id,
+                    "reason": "thread_not_owned",
+                },
+            )
+        )
+        raise PermissionError("thread_not_owned")
+
+    ordered = sorted(runs, key=lambda state: (state.created_ts, state.run_id))
+    if before is not None:
+        ordered = [state for state in ordered if state.created_ts < before]
+    has_more = len(ordered) > limit
+    window = ordered[-limit:] if limit > 0 else []
+    return ThreadHistoryOut(
+        thread_id=thread_id,
+        messages=[build_thread_message(state) for state in window],
+        has_more=has_more,
+    )
 
 
 async def build_run_state(auth: AuthContext, request: RunRequest) -> RunState:

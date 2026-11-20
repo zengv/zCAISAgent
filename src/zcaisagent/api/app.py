@@ -5,7 +5,13 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 from zcaisagent.api.deps import get_container
-from zcaisagent.api.routes import admin_router, chat_router, n2sql_router, runs_router
+from zcaisagent.api.routes import (
+    admin_router,
+    chat_router,
+    n2sql_router,
+    runs_router,
+    threads_router,
+)
 from zcaisagent.domain.errors import ZCAISAgentError
 from zcaisagent.ports.health import HealthStatus
 
@@ -169,6 +175,7 @@ def create_app() -> FastAPI:
     app.include_router(runs_router, prefix="/v1", tags=["runs"])
     app.include_router(n2sql_router, prefix="/v1", tags=["n2sql"])
     app.include_router(admin_router, prefix="/v1", tags=["admin"])
+    app.include_router(threads_router, prefix="/v1", tags=["threads"])
 
     @app.get("/", include_in_schema=False)
     async def index() -> FileResponse:

@@ -73,6 +73,7 @@ flowchart TB
         A1["POST /v1/chat (SSE)"]:::a
         A2["POST /v1/runs"]:::a
         A3["Admin / Eval / Trace API"]:::a
+        A4["GET /v1/threads/{id}/messages"]:::a
     end
 
     subgraph ORCH["编排层 orchestration/"]
@@ -231,6 +232,8 @@ async def execute(graph: GraphSpec, state: RunState, ctx: RunContext) -> RunStat
 |---|---|---|
 | **Checkpoint** | 每步 `save(run_id, state)`；现为 JSONL（`JsonlCheckpoint`，压缩+索引），可选 Postgres（`[checkpoint] backend`） | 崩溃恢复、回放、审计 |
 | **Interrupt / Resume** | 状态置 `AWAITING_USER`，API 收到输入后 `resume(run_id, patch)` | HITL 审批、澄清 |
+| **会话历史回放** | 前端只在 `localStorage` 保存 `thread_id`；刷新后调 `GET /v1/threads/{thread_id}/messages`，服务端按 `created_ts` 升序返回最近 `limit` 轮并校验 `tenant_id + user_id` 归属；不存在的会话返回空列表，越权统一 403 | 刷新恢复气泡与澄清卡片 |
+| **澄清追问** | `analyze → clarify` 条件边（先于 `analyze → route`）触发；`clarify` 节点不调模型、不检索、不计动作，写入追问文案并置 `AWAITING_USER`，无出边；澄清数据落在 `analysis["clarify"]` | 对外经 `RunResponse.clarify`（`ClarifyOut`：`questions[{question, options}]` + `reason`）暴露，仅 `AWAITING_USER` 时非空；SSE `done` 同时带 `clarify` 与 `stage`，前端渲染选项卡片 |
 | **重试** | 仅对幂等端口（LLM/检索）自动重试；工具按 `idempotent` 标记 | 避免重复副作用 |
 | **并发分支** | `asyncio.gather(..., return_exceptions=True)` 用于多源检索 | 部分失败不拖垮全局 |
 | **超时** | 节点级 + 调用级双层 | 防单点卡死 |
@@ -240,7 +243,7 @@ async def execute(graph: GraphSpec, state: RunState, ctx: RunContext) -> RunStat
 
 ### 3.4 内置图
 
-> **实现现状**：实际图为 `build_default_graph()`：`analyze→route→{abstain|direct_answer|n2sql|retrieve|plan}`；`plan→act→observe→reflect→{act|grade}`；`retrieve→grade→{abstain|synthesize|repair}`；`synthesize→verify→{respond|abstain|repair}`；`repair→{retrieve|synthesize|respond(降级)|abstain}`。**无独立的 `rewrite`/`source_route`/`replan`/`clarify` 节点**：改写与选源在 `retrieve` 节点内部完成，重规划由 `repair` 承担，澄清未实现。`n2sql` 仅在配置了 `[n2sql]` 且 `analyze` 命中数据查询意图时可达，命中后不进入知识检索。下方 §3.4.1/§3.4.2 的 mermaid 为**目标态蓝图**，节点名以本节说明与 README「检索路由链路」图为准。
+> **实现现状**：实际图为 `build_default_graph()`：`analyze→{clarify|route}`（`analysis["clarify"]` 非空时先走 `clarify` 追问，Run 停在 `AWAITING_USER`）；`analyze→route→{abstain|direct_answer|n2sql|retrieve|plan}`；`plan→act→observe→reflect→{act|grade}`；`retrieve→grade→{abstain|synthesize|repair}`；`synthesize→verify→{respond|abstain|repair}`；`repair→{retrieve|synthesize|respond(降级)|abstain}`。**无独立的 `rewrite`/`source_route`/`replan` 节点**：改写与选源在 `retrieve` 节点内部完成，重规划由 `repair` 承担；澄清判定在 `analyze` 内以规则 `detect_clarify` 完成，`clarify` 只负责落状态。`n2sql` 仅在配置了 `[n2sql]` 且 `analyze` 命中数据查询意图时可达，命中后不进入知识检索。下方 §3.4.1/§3.4.2 的 mermaid 为**目标态蓝图**，节点名以本节说明与 README「检索路由链路」图为准。
 
 #### 3.4.1 通用 Agent 循环（L2/L3）
 
@@ -711,6 +714,8 @@ class QueryAnalysis(BaseModel):
 | `decompose` | 多跳/对比 | 拆子问题（≤ 5 个） | 子问题需回指原问题 |
 
 > **硬规则**：原始 query 永远参与检索（至少一路），改写结果不能替代它。这直接修复图中第 1 步的缺陷。
+
+**多轮追问的改写分工**：`light` 级别的指代消解先由 `resolve_followup` 规则完成（拼接最近两条历史用户消息 + 本轮，`state.goal` 不改写）；若得到 `followup_query`，`analyze` 再调用 LLM 生成一条独立检索 query（`rewrite.py rewrite_query_with_llm`，`purpose="rewrite"`），成功写 `rewrite_query` 并记 `rewrite:llm`，失败回退规则记 `rewrite:rule`。检索与 rerank 取 query 的优先级为 `retry_query > rewrite_query > followup_query > goal`，`rewrite_queries` 的 `none` 首路恒为原 query。开关 `[conversation] llm_rewrite_enabled` 默认开启，关闭后只走规则补全。
 
 ### 8.4 混合检索与融合
 

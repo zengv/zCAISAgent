@@ -139,6 +139,11 @@ async def chat(
                 "confidence": response.confidence,
                 "limitations": response.limitations,
                 "metrics": response.metrics.model_dump(),
+                # 澄清追问（可选）：AWAITING_USER 时前端据此渲染选项按钮。
+                "clarify": (
+                    response.clarify.model_dump() if response.clarify else None
+                ),
+                "stage": response.stage,
             },
         )
 

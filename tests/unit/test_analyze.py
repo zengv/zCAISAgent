@@ -1,10 +1,13 @@
 import asyncio
+from dataclasses import replace
 
 from tests.conftest import make_ctx, make_state
 from zcaisagent.domain.enums import AutonomyLevel
 from zcaisagent.domain.models import Message
 from zcaisagent.governance.guards import RuleGuardrail
 from zcaisagent.orchestration.nodes.analyze import analyze_node
+from zcaisagent.ports.llm import LLMRequest, LLMResponse
+from zcaisagent.settings import ConversationConfig
 
 
 def _analyze(goal: str, requested: AutonomyLevel | None = None):
@@ -108,3 +111,62 @@ def test_followup_uses_recent_context_without_rewriting_goal() -> None:
     patch = asyncio.run(analyze_node(state, make_ctx()))
     assert patch.analysis["followup_query"] == "年假天数是多少？ 它呢？"
     assert state.goal == "它呢？"
+
+
+def test_llm_rewrite_sets_rewrite_query_and_budget() -> None:
+    class _RewriteLLM:
+        async def complete(self, req: LLMRequest) -> LLMResponse:
+            return LLMResponse(text="年假和病假天数分别是多少？", tokens_in=10, tokens_out=5)
+
+    ctx = make_ctx()
+    ctx.llm = _RewriteLLM()
+    state = make_state("这个呢？").model_copy(
+        update={
+            "messages": [
+                Message(role="user", content="年假天数是多少？"),
+                Message(role="user", content="那病假呢？"),
+                Message(role="user", content="这个呢？"),
+            ]
+        }
+    )
+    patch = asyncio.run(analyze_node(state, ctx))
+    assert patch.analysis["rewrite_query"] == "年假和病假天数分别是多少？"
+    assert "rewrite:llm" in patch.append_notes
+    assert patch.budget is not None
+    assert patch.budget.used_llm_calls == state.budget.used_llm_calls + 1
+
+
+def test_llm_rewrite_disabled_keeps_rule_followup() -> None:
+    ctx = make_ctx()
+    ctx.config = replace(
+        ctx.config, conversation=ConversationConfig(llm_rewrite_enabled=False)
+    )
+    state = make_state("它呢？").model_copy(
+        update={
+            "messages": [
+                Message(role="user", content="年假天数是多少？"),
+                Message(role="user", content="它呢？"),
+            ]
+        }
+    )
+    patch = asyncio.run(analyze_node(state, ctx))
+    assert patch.analysis["followup_query"] == "年假天数是多少？ 它呢？"
+    assert "rewrite_query" not in patch.analysis
+    assert "rewrite:llm" not in patch.append_notes
+
+
+def test_self_contained_question_skips_llm_rewrite() -> None:
+    class _RecordingLLM:
+        def __init__(self) -> None:
+            self.purposes: list[str] = []
+
+        async def complete(self, req: LLMRequest) -> LLMResponse:
+            self.purposes.append(req.purpose)
+            return LLMResponse(text="{}")
+
+    ctx = make_ctx()
+    llm = _RecordingLLM()
+    ctx.llm = llm
+    patch = asyncio.run(analyze_node(make_state("出差住宿标准是多少？"), ctx))
+    assert "followup_query" not in patch.analysis
+    assert "rewrite" not in llm.purposes

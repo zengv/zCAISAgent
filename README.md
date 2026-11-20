@@ -286,7 +286,7 @@ Windows 双击 [~start-backend.bat](./~start-backend.bat)（或在项目根目�
 2. 以 `uvicorn zcaisagent.api.app:app --host 127.0.0.1 --port 6278` 后台启动，`PYTHONPATH` 指向 `src`；
 3. 轮询 6278 端口，确认监听成功后打印访问地址；停止/重启按 6278 的监听进程处理，无需手动找 PID。
 
-启动后浏览器打开 <http://127.0.0.1:6278/>，即控制台页面：由 FastAPI 同源托管 `api/static/chat.html`，可直接多轮对话、查看答案与引用来源，无需单独启动前端。首次使用在左侧「X-API-Key」填写密钥（默认 `dev-key`，可用环境变量 `ZCAISAGENT_API_KEY` 覆盖）。
+启动后浏览器打开 <http://127.0.0.1:6278/>，即控制台页面：由 FastAPI 同源托管 `api/static/chat.html`，可直接多轮对话、查看答案与引用来源，无需单独启动前端。页面支持多轮追问、模糊问题澄清（2-4 个选项 + 自由输入，点选或补充后以同一会话继续）与 query 改写；刷新页面时只从 `localStorage` 取 `thread_id`，再经 `GET /v1/threads/{thread_id}/messages` 回放最近 20 轮，因此会话与澄清卡片可恢复。`config.toml` 的 `[conversation] llm_rewrite_enabled` 可关闭 LLM 兜底改写（默认开启，关闭后只走规则补全）。首次使用在左侧「X-API-Key」填写密钥（默认 `dev-key`，可用环境变量 `ZCAISAGENT_API_KEY` 覆盖）。
 
 日志：`.zcaisagent/backend.log`（stderr）与 `.zcaisagent/backend.log.out`（stdout）；启动失败时先看这里。
 

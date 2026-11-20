@@ -39,6 +39,8 @@ class GraphRetriever:
 
     source_name = "graph"
     source_type = SourceType.DOCUMENT
+    # 命中依赖模型抽取的实体关系，属间接召回，按二手处理。
+    authority = "secondary"
 
     def __init__(self, llm: LLMPort, timeout_s: float = 60.0, cache_enabled: bool = True) -> None:
         self.llm = llm
@@ -275,7 +277,7 @@ class GraphRetriever:
                     snippet=chunk.content[:160],
                     score=score,
                     relevance=score,
-                    authority="secondary",
+                    authority=self.authority,
                     version=chunk.version or parsed,
                     metadata={
                         "doc_id": chunk.doc_id,

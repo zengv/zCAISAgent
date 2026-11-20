@@ -81,7 +81,7 @@ dimensions = 1024
 # 回退全局 ZCAISAGENT_INPUT/OUTPUT_PRICE_PER_MTOK。以下为示例单价，请按账单修改。
 
 [model_providers.modelscope-ds-flash]
-name = "MS-Deepseek-flash"
+name = "MS/Deepseek-flash"
 model = "deepseek-ai/DeepSeek-V4.1-Flash-1017"
 base_url = "https://api-inference.modelscope.cn/v1"
 key_env = "AI_KEY_MS"
@@ -91,7 +91,7 @@ cost_in = 0.28
 cost_out = 0.42
 
 [model_providers.modelscope-glm-flash]
-name = "GLM-5.3-Flash"
+name = "MS/GLM-5.3-Flash"
 model = "ZhipuAI/GLM-5.3-Flash"
 base_url = "https://api-inference.modelscope.cn/v1"
 key_env = "AI_KEY_MS"
@@ -99,6 +99,16 @@ context_window = 400000
 reasoning_effort = "low"
 cost_in = 0.20
 cost_out = 0.60
+
+[model_providers.tencent-ds-flash]
+name = "TX/Deepseek-flash"
+model = "deepseek/deepseek-flash"
+base_url = "https://tokenhub.tencentmaas.com/v1"
+key_env = "AI_KEY_TX"
+context_window = 800000
+reasoning_effort = "high"
+cost_in = 0.28
+cost_out = 0.42
 
 [model_providers.deepseek]
 name = "Deepseek-flash"
